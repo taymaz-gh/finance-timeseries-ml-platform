@@ -24,6 +24,8 @@ def load_databricks_config() -> dict[str, str]:
         "server_hostname": os.getenv("DATABRICKS_SERVER_HOSTNAME"),
         "http_path": os.getenv("DATABRICKS_HTTP_PATH"),
         "access_token": os.getenv("DATABRICKS_TOKEN"),
+        "catalog": os.getenv("DATABRICKS_CATALOG"),
+        "schema": os.getenv("DATABRICKS_SCHEMA"),
     }
 
     missing = [key for key, value in config.items() if not value]
