@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 
 import pandas as pd
 from databricks import sql
-from dotenv import load_dotenv
+
+from finance_ml.utils.config import load_databricks_config
 
 
 def query_with_sql_connector(
@@ -22,16 +22,12 @@ def query_with_sql_connector(
     Returns:
         Query result as a pandas DataFrame.
     """
-    load_dotenv()
-
-    server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME")
-    http_path = os.getenv("DATABRICKS_HTTP_PATH")
-    access_token = os.getenv("DATABRICKS_TOKEN")
+    config = load_databricks_config()
 
     with sql.connect(
-        server_hostname=server_hostname,
-        http_path=http_path,
-        access_token=access_token,
+        server_hostname=config["server_hostname"],
+        http_path=config["http_path"],
+        access_token=config["access_token"],
     ) as connection:
         with connection.cursor() as cursor:
             cursor.execute(query)
