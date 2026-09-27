@@ -225,3 +225,65 @@ def test_build_gold_creates_same_day_derived_features(
 
     assert result[1]["net_cash_flow"] is None
     assert result[1]["payment_gap"] == 30.0
+
+
+def test_build_gold_uses_date_aware_rolling_window(
+    spark,
+) -> None:
+    """
+    Checking that the 7-day rolling window uses calendar time,
+    not simply the previous six rows.
+    """
+    days = [1, 2, 3, 4, 5, 6, 8]
+
+    rows = [
+        (
+            "ACC_TEST",
+            datetime(2026, 1, day),
+            float(day * 100),
+            50.0,
+            float(day * 10),
+            0.4,
+            100.0,
+            90.0,
+            float(day) / 10.0,
+            day - 1,
+            0,
+            "normal",
+        )
+        for day in days
+    ]
+
+    columns = [
+        "account_id",
+        "date",
+        "balance",
+        "cash_inflow",
+        "cash_outflow",
+        "credit_utilization",
+        "amount_due",
+        "amount_paid",
+        "payment_ratio",
+        "days_past_due",
+        "risk_state",
+        "risk_state_name",
+    ]
+
+    silver_df = spark.createDataFrame(
+        rows,
+        columns,
+    )
+
+    gold_df = build_gold_features(silver_df)
+
+    result = gold_df.orderBy("date").collect()
+
+    jan_8 = result[-1]
+
+    assert jan_8["rolling_7d_mean_balance"] == pytest.approx(
+        (200 + 300 + 400 + 500 + 600 + 800) / 6
+    )
+
+    assert jan_8["rolling_7d_mean_cash_outflow"] == pytest.approx(
+        (20 + 30 + 40 + 50 + 60 + 80) / 6
+    )
