@@ -20,7 +20,19 @@ def build_gold_features(silver_df):
 
     ordered_window = Window.partitionBy("account_id").orderBy("date")
 
-    rolling_7d_window = ordered_window.rowsBetween(-6, 0)
+    seconds_per_day = 24 * 60 * 60
+
+    rolling_7d_window = (
+        Window
+        .partitionBy("account_id")
+        .orderBy(
+            F.col("date").cast("long")
+        )
+        .rangeBetween(
+            -6 * seconds_per_day,
+            0,
+        )
+    )
 
     gold_df = (
         silver_df

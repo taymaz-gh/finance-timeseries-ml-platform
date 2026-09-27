@@ -139,10 +139,26 @@ must be excluded from the model input feature matrix.
 
 ## Rolling-window horizon
 
-The initial Gold feature set uses a 7-day trailing window.
+The initial Gold feature set uses a 7-day trailing calendar window.
 
-For each `account_id`, rolling calculations are ordered by `date` and may
-use only the current row and the previous six rows.
+For each `account_id`, rolling calculations are ordered by `date` and include
+all observations whose timestamps fall between day `t-6` and day `t`,
+inclusive.
+
+This is implemented with a date-aware Spark range window rather than a
+row-count window.
+
+Using a row-count window such as `rowsBetween(-6, 0)` would mean
+"the current row plus six previous observations." That is only equivalent to
+seven calendar days when every account has exactly one observation on every
+day.
+
+Because Silver may contain missing dates after rows with missing targets are
+removed, the Gold layer uses calendar-time semantics instead.
+
+The rolling window therefore remains correct even when observations are
+irregularly spaced.
+
 
 This gives a maximum window of seven daily observations:
 
@@ -160,6 +176,27 @@ The initial rolling features are:
 - `rolling_7d_mean_cash_outflow`
 - `rolling_7d_mean_payment_ratio`
 - `rolling_7d_max_days_past_due`
+
+
+## Lag semantics with missing dates
+
+Lag features represent the most recent previous available observation within
+the same `account_id`.
+
+They should not be interpreted as necessarily coming from the previous
+calendar day.
+
+For example, if an account has observations on January 8 and January 10 but
+not January 9, the January 10 lag feature uses the January 8 observation.
+
+This behavior is intentional and differs from the date-aware 7-day rolling
+features, which are defined using elapsed calendar time.
+
+The distinction is important:
+
+lag → previous available observation
+
+7-day rolling feature → actual trailing 7 calendar days
 
 
 ## Validation results
