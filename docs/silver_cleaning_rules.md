@@ -6,7 +6,7 @@ and machine-learning workflows.
 
 ## Primary key
 
-Each valid Silver row must be uniquely identified by:
+Each valid Silver row must be uniquely identified by the combined key:
 
 - `account_id`
 - `date`
@@ -46,6 +46,7 @@ Forward filling is preferred for temporally persistent variables.
 If no earlier valid observation exists, the value remains missing unless
 a variable-specific fallback rule is defined.
 
+
 ## Target labels
 
 Rows with missing target labels are removed.
@@ -82,7 +83,7 @@ from the same `account_id`:
 - `days_past_due`
 
 Imputation must use only values that were originally observed in the source
-data.
+data: an imputed value must not itself become the source for another imputation.
 
 An imputed value must never be used as the source for imputing a later
 missing value. This prevents imputation error from propagating through a

@@ -45,4 +45,4 @@ FROM (
         account_id,
         date
     HAVING COUNT(*) > 1
-);
+) AS duplicate_groups;
