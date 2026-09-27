@@ -29,3 +29,6 @@ dist/
 # Model and generated artifacts
 artifacts/*
 !artifacts/.gitkeep
+
+# Private documentation
+help.txt

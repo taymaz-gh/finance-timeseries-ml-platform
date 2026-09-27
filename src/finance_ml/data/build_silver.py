@@ -36,10 +36,23 @@ def build_silver_dataframe(bronze_df):
     )
 
     # Removing duplicate account-date rows deterministically.
-    dedup_window = Window.partitionBy(
-        "account_id",
-        "date",
-    ).orderBy(*[F.col(column).asc_nulls_last() for column in bronze_df.columns])
+    dedup_window = (
+        Window
+        .partitionBy(
+            "account_id",
+            "date",
+        )
+        .orderBy(
+            (
+                F.col("risk_state").isNull().cast("int")
+                + F.col("risk_state_name").isNull().cast("int")
+            ).asc(),
+            *[
+                F.col(column).asc_nulls_last()
+                for column in bronze_df.columns
+            ],
+        )
+    )
 
     silver_df = (
         silver_df.withColumn(
