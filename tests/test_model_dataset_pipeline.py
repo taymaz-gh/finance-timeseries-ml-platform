@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.model_dataset_pipeline import (
+from finance_ml.pipelines.model_dataset_pipeline import (
     prepare_model_dataset,
 )
 

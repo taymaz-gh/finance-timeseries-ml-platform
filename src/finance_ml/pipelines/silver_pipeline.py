@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from finance_ml.data.build_silver import build_silver_dataframe
+from finance_ml.lakehouse.build_silver import build_silver_dataframe
 
 
 def run_silver_pipeline(

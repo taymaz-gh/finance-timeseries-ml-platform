@@ -1,4 +1,4 @@
-from finance_ml.data.feature_schema import (
+from finance_ml.preprocessing.feature_schema import (
     build_final_feature_columns,
 )
 

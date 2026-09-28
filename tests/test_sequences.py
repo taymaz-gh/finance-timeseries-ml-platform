@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.sequences import build_sequences
+from finance_ml.preprocessing.sequences import build_sequences
 
 
 @pytest.fixture(scope="module")

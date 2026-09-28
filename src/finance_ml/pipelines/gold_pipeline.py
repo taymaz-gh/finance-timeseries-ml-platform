@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from finance_ml.features.build_gold import build_gold_features
+from finance_ml.lakehouse.build_gold import build_gold_features
 
 
 def run_gold_pipeline(

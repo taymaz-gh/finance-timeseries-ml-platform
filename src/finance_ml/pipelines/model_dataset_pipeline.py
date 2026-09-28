@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from finance_ml.data.encoding import (
+from finance_ml.preprocessing.encoding import (
     apply_one_hot_encoding,
     fit_category_levels,
 )
-from finance_ml.data.feature_schema import (
+from finance_ml.preprocessing.feature_schema import (
     build_final_feature_columns,
 )
-from finance_ml.data.imputation import (
+from finance_ml.preprocessing.imputation import (
     apply_numeric_imputation,
     fit_numeric_medians,
 )
-from finance_ml.data.model_dataset import (
+from finance_ml.preprocessing.model_dataset import (
     get_model_columns,
 )
-from finance_ml.data.scaling import (
+from finance_ml.preprocessing.scaling import (
     apply_scaling,
     fit_scaler,
 )
-from finance_ml.data.sequences import (
+from finance_ml.preprocessing.sequences import (
     build_sequences,
 )
-from finance_ml.data.split import (
+from finance_ml.preprocessing.split import (
     temporal_split,
 )
 

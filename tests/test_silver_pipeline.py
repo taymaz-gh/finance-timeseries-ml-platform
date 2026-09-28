@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-from finance_ml.data.silver_pipeline import run_silver_pipeline
+from finance_ml.pipelines.silver_pipeline import run_silver_pipeline
 
 
 def test_run_silver_pipeline_loads_transforms_and_persists(
@@ -18,7 +18,7 @@ def test_run_silver_pipeline_loads_transforms_and_persists(
     build_silver_mock = Mock(return_value=silver_df)
 
     monkeypatch.setattr(
-        "finance_ml.data.silver_pipeline.build_silver_dataframe",
+        "finance_ml.pipelines.silver_pipeline.build_silver_dataframe",
         build_silver_mock,
     )
 

@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.split import temporal_split
+from finance_ml.preprocessing.split import temporal_split
 
 
 @pytest.fixture(scope="module")

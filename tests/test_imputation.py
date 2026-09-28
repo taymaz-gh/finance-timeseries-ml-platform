@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.imputation import (
+from finance_ml.preprocessing.imputation import (
     apply_numeric_imputation,
     fit_numeric_medians,
 )
