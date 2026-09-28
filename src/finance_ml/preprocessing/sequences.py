@@ -132,6 +132,7 @@ def build_sequences(
                     "group": group_value,
                     "start_time": window_rows[0][time_col],
                     "end_time": window_rows[-1][time_col],
+                    "times": [row[time_col] for row in window_rows],
                 }
             )
 
