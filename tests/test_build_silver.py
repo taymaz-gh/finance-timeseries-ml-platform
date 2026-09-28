@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.build_silver import build_silver_dataframe
+from finance_ml.lakehouse.build_silver import build_silver_dataframe
 
 
 @pytest.fixture(scope="module")

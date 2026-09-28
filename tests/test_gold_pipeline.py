@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-from finance_ml.features.gold_pipeline import run_gold_pipeline
+from finance_ml.pipelines.gold_pipeline import run_gold_pipeline
 
 
 def test_run_gold_pipeline_loads_transforms_and_persists(
@@ -18,7 +18,7 @@ def test_run_gold_pipeline_loads_transforms_and_persists(
     build_gold_mock = Mock(return_value=gold_df)
 
     monkeypatch.setattr(
-        "finance_ml.features.gold_pipeline.build_gold_features",
+        "finance_ml.pipelines.gold_pipeline.build_gold_features",
         build_gold_mock,
     )
 

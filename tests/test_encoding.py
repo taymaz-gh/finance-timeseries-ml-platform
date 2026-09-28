@@ -1,7 +1,7 @@
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.encoding import (
+from finance_ml.preprocessing.encoding import (
     apply_one_hot_encoding,
     fit_category_levels,
 )

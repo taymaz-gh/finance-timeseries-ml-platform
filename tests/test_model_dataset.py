@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.model_dataset import get_model_columns
+from finance_ml.preprocessing.model_dataset import get_model_columns
 
 
 @pytest.fixture(scope="module")

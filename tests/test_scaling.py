@@ -1,7 +1,7 @@
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.data.scaling import (
+from finance_ml.preprocessing.scaling import (
     apply_scaling,
     fit_scaler,
 )

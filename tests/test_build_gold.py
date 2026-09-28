@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from pyspark.sql import SparkSession
 
-from finance_ml.features.build_gold import build_gold_features
+from finance_ml.lakehouse.build_gold import build_gold_features
 
 
 @pytest.fixture(scope="module")
