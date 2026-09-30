@@ -12,112 +12,9 @@ from finance_ml.models.prediction_aggregation import (
     aggregate_sequence_probabilities,
 )
 
-
-def _aggregate_true_labels(
-    y_true: np.ndarray,
-    metadata: Sequence[dict],
-    *,
-    sequence_length: int,
-    boundary_width: int,
-) -> dict[tuple[object, object], int]:
-    """
-    Build one ground-truth class label per retained original timestep.
-
-    Overlapping sequences can contain the same original timestep multiple
-    times. The repeated ground-truth labels must therefore agree.
-
-    Args:
-        y_true:
-            Integer sequence labels with shape
-            ``(n_sequences, sequence_length)``.
-
-        metadata:
-            Sequence metadata containing ``group`` and ``times``.
-
-        sequence_length:
-            Number of timesteps in each sequence.
-
-        boundary_width:
-            Number of positions excluded from each sequence boundary.
-
-    Returns:
-        Mapping from ``(group, time)`` to the corresponding true class.
-
-    Raises:
-        ValueError:
-            If shapes, metadata, or repeated labels are inconsistent.
-    """
-    y_true = np.asarray(y_true)
-
-    if y_true.ndim != 2:
-        raise ValueError("y_true must have shape " "(n_sequences, sequence_length).")
-
-    n_sequences, observed_sequence_length = y_true.shape
-
-    if observed_sequence_length != sequence_length:
-        raise ValueError("sequence_length does not match y_true.shape[1].")
-
-    if len(metadata) != n_sequences:
-        raise ValueError("metadata length must equal the number of sequences.")
-
-    if boundary_width < 0:
-        raise ValueError("boundary_width must be non-negative.")
-
-    first_retained_position = boundary_width
-    last_retained_position = sequence_length - boundary_width
-
-    if first_retained_position >= last_retained_position:
-        raise ValueError("boundary_width removes all sequence positions.")
-
-    aggregated_true_labels: dict[
-        tuple[object, object],
-        int,
-    ] = {}
-
-    for sequence_index in range(n_sequences):
-        sequence_metadata = metadata[sequence_index]
-
-        if "group" not in sequence_metadata:
-            raise ValueError("Each metadata item must contain 'group'.")
-
-        if "times" not in sequence_metadata:
-            raise ValueError("Each metadata item must contain 'times'.")
-
-        times = sequence_metadata["times"]
-
-        if len(times) != sequence_length:
-            raise ValueError("Metadata 'times' length must equal sequence_length.")
-
-        group_value = sequence_metadata["group"]
-
-        for position in range(
-            first_retained_position,
-            last_retained_position,
-        ):
-            key = (
-                group_value,
-                times[position],
-            )
-
-            class_label = int(
-                y_true[
-                    sequence_index,
-                    position,
-                ]
-            )
-
-            if (
-                key in aggregated_true_labels
-                and aggregated_true_labels[key] != class_label
-            ):
-                raise ValueError(
-                    "Overlapping sequences contain inconsistent "
-                    f"ground-truth labels for {key}."
-                )
-
-            aggregated_true_labels[key] = class_label
-
-    return aggregated_true_labels
+from finance_ml.models.evaluation import (
+    aggregate_true_labels,
+)
 
 
 class ValidationMacroF1(tf.keras.callbacks.Callback):
@@ -193,7 +90,7 @@ class ValidationMacroF1(tf.keras.callbacks.Callback):
         self.batch_size = batch_size
         self.verbose = verbose
 
-        self.true_labels = _aggregate_true_labels(
+        self.true_labels = aggregate_true_labels(
             self.y_validation,
             self.metadata_validation,
             sequence_length=self.sequence_length,

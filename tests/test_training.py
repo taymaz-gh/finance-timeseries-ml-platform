@@ -11,8 +11,11 @@ from finance_ml.models.lstm import (
 )
 from finance_ml.models.training import (
     ValidationMacroF1,
-    _aggregate_true_labels,
     train_sequence_model,
+)
+
+from finance_ml.models.evaluation import (
+    aggregate_true_labels,
 )
 
 
@@ -39,7 +42,7 @@ def test_aggregate_true_labels_trims_boundaries() -> None:
         }
     ]
 
-    result = _aggregate_true_labels(
+    result = aggregate_true_labels(
         y_true,
         metadata,
         sequence_length=7,
@@ -90,7 +93,7 @@ def test_aggregate_true_labels_rejects_inconsistent_overlap() -> None:
     ]
 
     with pytest.raises(ValueError):
-        _aggregate_true_labels(
+        aggregate_true_labels(
             y_true,
             metadata,
             sequence_length=7,
