@@ -436,3 +436,19 @@ empirically against alternatives such as:
 - keeping only the exact center timestep;
 - averaging all overlapping predictions;
 - weighting predictions by distance from the sequence center.
+
+
+### Boundary trimming and downstream evaluation
+
+For sequence length 7 with `boundary_width = 2`, predictions from positions
+0, 1, 5, and 6 of each sequence are excluded from aggregation. Only positions
+2, 3, and 4 are retained.
+
+As a consequence, the first two and last two timesteps of each account within
+a dataset split do not receive aggregated predictions. These rows are
+intentionally excluded rather than treated as missing model outputs.
+
+Downstream evaluation, reporting, and prediction joins must therefore operate
+on the retained aggregated prediction set. Metrics such as accuracy, macro-F1,
+precision, recall, and confusion matrices must not assume that every original
+timestep has a prediction.
