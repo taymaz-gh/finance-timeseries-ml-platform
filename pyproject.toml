@@ -34,3 +34,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+
+[tool.databricks.environment]
+environment_version = "6"
