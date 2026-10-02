@@ -7,52 +7,58 @@ from collections.abc import Sequence
 import numpy as np
 import tensorflow as tf
 
-from finance_ml.models.metrics import macro_f1_score
+from finance_ml.models.evaluation import (
+    aggregate_true_labels,
+)
+from finance_ml.models.metrics import (
+    macro_f1_score,
+)
 from finance_ml.models.prediction_aggregation import (
     aggregate_sequence_probabilities,
 )
 
-from finance_ml.models.evaluation import (
-    aggregate_true_labels,
-)
 
-
-class ValidationMacroF1(tf.keras.callbacks.Callback):
+class AggregatedMacroF1(tf.keras.callbacks.Callback):
     """
-    Compute validation macro-F1 after prediction aggregation.
+    Compute evaluation-consistent macro-F1 after each training epoch.
 
-    The callback performs model inference on the validation sequences at
-    the end of each epoch, removes sequence-boundary predictions,
-    aggregates overlapping probability vectors by original timestep,
-    and computes macro-F1 on the resulting retained predictions.
+    The callback performs model inference on a specified dataset at the
+    end of each epoch, removes sequence-boundary predictions, aggregates
+    overlapping probability vectors by original timestep, and computes
+    macro-F1 on the resulting retained predictions.
+
+    The same callback is used for both training and validation data.
+    The metric is written to Keras logs under a configurable name such
+    as ``macro_f1`` or ``val_macro_f1``.
     """
 
     def __init__(
         self,
         *,
-        x_validation: np.ndarray,
-        y_validation: np.ndarray,
-        metadata_validation: Sequence[dict],
+        x_data: np.ndarray,
+        y_data: np.ndarray,
+        metadata: Sequence[dict],
         sequence_length: int,
         n_classes: int,
         boundary_width: int = 2,
         batch_size: int = 256,
+        metric_name: str,
         verbose: int = 1,
     ) -> None:
         """
-        Initialize validation macro-F1 computation.
+        Initialize aggregated macro-F1 computation.
 
         Args:
-            x_validation:
-                Validation features with shape
+            x_data:
+                Features with shape
                 ``(n_sequences, sequence_length, n_features)``.
 
-            y_validation:
-                Integer validation targets with shape
+            y_data:
+                Integer targets with shape
                 ``(n_sequences, sequence_length)``.
 
-            metadata_validation:
-                Metadata corresponding to validation sequences.
+            metadata:
+                Metadata corresponding to the sequences.
 
             sequence_length:
                 Number of timesteps in every sequence.
@@ -65,10 +71,13 @@ class ValidationMacroF1(tf.keras.callbacks.Callback):
                 before overlapping predictions are aggregated.
 
             batch_size:
-                Batch size used for validation prediction.
+                Batch size used for model prediction.
+
+            metric_name:
+                Name under which the metric is written to Keras logs.
 
             verbose:
-                Whether to print validation macro-F1 after each epoch.
+                Whether to print the metric after each epoch.
         """
         super().__init__()
 
@@ -78,21 +87,27 @@ class ValidationMacroF1(tf.keras.callbacks.Callback):
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
 
-        self.x_validation = np.asarray(x_validation)
+        if not metric_name:
+            raise ValueError("metric_name must not be empty.")
 
-        self.y_validation = np.asarray(y_validation)
+        self.x_data = np.asarray(x_data)
 
-        self.metadata_validation = list(metadata_validation)
+        self.y_data = np.asarray(y_data)
+
+        self.metadata = list(metadata)
 
         self.sequence_length = sequence_length
         self.n_classes = n_classes
         self.boundary_width = boundary_width
         self.batch_size = batch_size
+        self.metric_name = metric_name
         self.verbose = verbose
 
+        # Precomputing true labels avoids repeating this work after
+        # every epoch.
         self.true_labels = aggregate_true_labels(
-            self.y_validation,
-            self.metadata_validation,
+            self.y_data,
+            self.metadata,
             sequence_length=self.sequence_length,
             boundary_width=self.boundary_width,
         )
@@ -102,19 +117,19 @@ class ValidationMacroF1(tf.keras.callbacks.Callback):
         epoch: int,
         logs: dict | None = None,
     ) -> None:
-        """Compute and expose aggregated validation macro-F1."""
+        """Compute and expose aggregated macro-F1."""
         if logs is None:
             logs = {}
 
         probabilities = self.model.predict(
-            self.x_validation,
+            self.x_data,
             batch_size=self.batch_size,
             verbose=0,
         )
 
         aggregated_predictions = aggregate_sequence_probabilities(
             probabilities,
-            self.metadata_validation,
+            self.metadata,
             sequence_length=self.sequence_length,
             boundary_width=self.boundary_width,
         )
@@ -140,19 +155,22 @@ class ValidationMacroF1(tf.keras.callbacks.Callback):
 
         if not y_true_aggregated:
             raise ValueError(
-                "No validation timesteps remain after " "boundary trimming."
+                "No timesteps remain after boundary trimming."
             )
 
-        validation_macro_f1 = macro_f1_score(
+        aggregated_macro_f1 = macro_f1_score(
             np.asarray(y_true_aggregated),
             np.asarray(y_pred_aggregated),
             n_classes=self.n_classes,
         )
 
-        logs["val_macro_f1"] = validation_macro_f1
+        logs[self.metric_name] = aggregated_macro_f1
 
         if self.verbose:
-            print(f" - val_macro_f1: " f"{validation_macro_f1:.4f}")
+            print(
+                f" - {self.metric_name}: "
+                f"{aggregated_macro_f1:.4f}"
+            )
 
 
 def train_sequence_model(
@@ -160,6 +178,7 @@ def train_sequence_model(
     *,
     x_train: np.ndarray,
     y_train: np.ndarray,
+    metadata_train: Sequence[dict],
     x_validation: np.ndarray,
     y_validation: np.ndarray,
     metadata_validation: Sequence[dict],
@@ -174,9 +193,11 @@ def train_sequence_model(
     """
     Train a sequence classifier using aggregated validation macro-F1.
 
-    Model selection uses validation macro-F1 after boundary trimming and
-    overlapping-prediction aggregation. This matches the downstream
-    evaluation convention used by the project.
+    Training and validation macro-F1 are both computed using the same
+    evaluation convention: boundary trimming followed by overlapping
+    prediction aggregation at the original-timestep level.
+
+    Early stopping and model selection use ``val_macro_f1`` only.
 
     Args:
         model:
@@ -187,6 +208,9 @@ def train_sequence_model(
 
         y_train:
             Integer training targets.
+
+        metadata_train:
+            Metadata corresponding to training sequences.
 
         x_validation:
             Validation features.
@@ -235,14 +259,27 @@ def train_sequence_model(
     if patience < 0:
         raise ValueError("patience must be non-negative.")
 
-    validation_macro_f1_callback = ValidationMacroF1(
-        x_validation=x_validation,
-        y_validation=y_validation,
-        metadata_validation=metadata_validation,
+    training_macro_f1_callback = AggregatedMacroF1(
+        x_data=x_train,
+        y_data=y_train,
+        metadata=metadata_train,
         sequence_length=sequence_length,
         n_classes=n_classes,
         boundary_width=boundary_width,
         batch_size=batch_size,
+        metric_name="macro_f1",
+        verbose=verbose,
+    )
+
+    validation_macro_f1_callback = AggregatedMacroF1(
+        x_data=x_validation,
+        y_data=y_validation,
+        metadata=metadata_validation,
+        sequence_length=sequence_length,
+        n_classes=n_classes,
+        boundary_width=boundary_width,
+        batch_size=batch_size,
+        metric_name="val_macro_f1",
         verbose=verbose,
     )
 
@@ -264,6 +301,7 @@ def train_sequence_model(
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[
+            training_macro_f1_callback,
             validation_macro_f1_callback,
             early_stopping,
         ],

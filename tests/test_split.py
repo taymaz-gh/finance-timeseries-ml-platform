@@ -6,16 +6,6 @@ from pyspark.sql import SparkSession
 from finance_ml.preprocessing.split import temporal_split
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for temporal split tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("split-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
 
 
 def test_temporal_split_uses_distinct_timestamps(

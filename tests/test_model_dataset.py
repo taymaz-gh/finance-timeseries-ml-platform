@@ -6,19 +6,6 @@ from pyspark.sql import SparkSession
 from finance_ml.preprocessing.model_dataset import get_model_columns
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for model-dataset tests."""
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("model-dataset-tests")
-        .getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_get_model_columns_separates_feature_types(
     spark,

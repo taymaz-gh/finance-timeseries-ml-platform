@@ -450,6 +450,49 @@ This produces the monitoring quantity:
 which represents macro-F1 on the retained original validation timesteps
 after prediction aggregation.
 
+
+## Training and Validation Macro-F1
+
+### Definition of Macro-F1
+
+For this project, `macro-F1` is defined at the **original-timestep level**, rather than directly over sequence positions.
+
+Model predictions are processed as follows:
+
+1. Generate predictions for each sequence.
+2. Remove the boundary positions that are excluded from evaluation.
+3. Map retained sequence positions back to their original timestamps using the sequence metadata.
+4. Aggregate predictions from overlapping sequences referring to the same original timestep.
+5. Compute the per-class F1 scores from the resulting timestep-level predictions.
+6. Compute macro-F1 as the unweighted mean of the per-class F1 scores.
+
+Therefore, macro-F1 represents performance across the original retained timesteps, with each class contributing equally to the final score.
+
+### Training Macro-F1
+
+`macro_f1` denotes the evaluation-consistent macro-F1 calculated on the training set after each epoch.
+
+It uses the **same boundary trimming, overlap aggregation, and timestep-level evaluation procedure** as `val_macro_f1` and the final test macro-F1.
+
+It is therefore not the ordinary Keras batch-level classification metric. Instead, after an epoch, the model's training-set predictions are processed through the same evaluation logic used for validation and test data.
+
+The purpose of `macro_f1` is to provide a training-side counterpart to `val_macro_f1` that is directly comparable under the same definition.
+
+The resulting learning-history fields are therefore:
+
+- `macro_f1`: evaluation-consistent macro-F1 on the training set.
+- `val_macro_f1`: evaluation-consistent macro-F1 on the validation set.
+
+Comparing these two quantities helps identify potential overfitting while maintaining a consistent definition of macro-F1 across training, validation, and test evaluation.
+
+### Computational Consideration
+
+Because evaluation-consistent training macro-F1 requires generating predictions over the training set and performing boundary trimming and overlap aggregation after each epoch, it introduces additional computation compared with ordinary batch-level training metrics such as accuracy.
+
+This additional computation is intentional: the resulting metric is directly comparable with the validation macro-F1 (in the learning curves) and test macro-F1 used by the project's evaluation protocol.
+
+
+
 ### Early stopping
 
 Training uses Keras `EarlyStopping` with:

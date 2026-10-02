@@ -9,19 +9,6 @@ from finance_ml.preprocessing.imputation import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for imputation tests."""
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("imputation-tests")
-        .getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_fit_numeric_medians_uses_training_data_only(
     spark,

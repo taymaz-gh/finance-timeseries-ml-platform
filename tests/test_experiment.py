@@ -72,6 +72,12 @@ def test_run_lstm_experiment_returns_complete_result() -> None:
         dtype=np.int64,
     )
 
+    metadata_train = _build_metadata(
+        n_sequences=12,
+        sequence_length=sequence_length,
+        group_prefix="train",
+    )
+
     metadata_validation = _build_metadata(
         n_sequences=4,
         sequence_length=sequence_length,
@@ -87,6 +93,7 @@ def test_run_lstm_experiment_returns_complete_result() -> None:
     result = run_lstm_experiment(
         x_train=x_train,
         y_train=y_train,
+        metadata_train=metadata_train,
         x_validation=x_validation,
         y_validation=y_validation,
         metadata_validation=metadata_validation,
@@ -181,6 +188,12 @@ def test_run_lstm_experiment_respects_boundary_trimming() -> None:
         dtype=np.int64,
     )
 
+    metadata_train = _build_metadata(
+        n_sequences=6,
+        sequence_length=sequence_length,
+        group_prefix="train",
+    )
+
     metadata_validation = _build_metadata(
         n_sequences=2,
         sequence_length=sequence_length,
@@ -196,6 +209,7 @@ def test_run_lstm_experiment_respects_boundary_trimming() -> None:
     result = run_lstm_experiment(
         x_train=x_train,
         y_train=y_train,
+        metadata_train=metadata_train,
         x_validation=x_validation,
         y_validation=y_validation,
         metadata_validation=metadata_validation,

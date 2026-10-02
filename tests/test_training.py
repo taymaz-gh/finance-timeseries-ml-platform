@@ -6,16 +6,15 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
+from finance_ml.models.evaluation import (
+    aggregate_true_labels,
+)
 from finance_ml.models.lstm import (
     build_lstm_sequence_classifier,
 )
 from finance_ml.models.training import (
-    ValidationMacroF1,
+    AggregatedMacroF1,
     train_sequence_model,
-)
-
-from finance_ml.models.evaluation import (
-    aggregate_true_labels,
 )
 
 
@@ -68,27 +67,11 @@ def test_aggregate_true_labels_rejects_inconsistent_overlap() -> None:
     metadata = [
         {
             "group": "A",
-            "times": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-            ],
+            "times": [1, 2, 3, 4, 5, 6, 7],
         },
         {
             "group": "A",
-            "times": [
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-                8,
-            ],
+            "times": [2, 3, 4, 5, 6, 7, 8],
         },
     ]
 
@@ -101,43 +84,90 @@ def test_aggregate_true_labels_rejects_inconsistent_overlap() -> None:
         )
 
 
-def test_validation_macro_f1_adds_metric_to_logs() -> None:
-    """Expose aggregated validation macro-F1 to Keras logs."""
-    x_validation = np.zeros(
+def test_aggregated_macro_f1_adds_metric_to_logs() -> None:
+    """Expose evaluation-consistent macro-F1 to Keras logs."""
+    x_data = np.zeros(
         shape=(1, 7, 2),
         dtype=np.float32,
     )
 
-    y_validation = np.array(
+    y_data = np.array(
         [
             [0, 0, 1, 1, 2, 2, 3],
         ],
         dtype=np.int64,
     )
 
-    metadata_validation = [
+    metadata = [
         {
             "group": "A",
-            "times": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-            ],
+            "times": [1, 2, 3, 4, 5, 6, 7],
         }
     ]
 
-    callback = ValidationMacroF1(
-        x_validation=x_validation,
-        y_validation=y_validation,
-        metadata_validation=metadata_validation,
+    callback = AggregatedMacroF1(
+        x_data=x_data,
+        y_data=y_data,
+        metadata=metadata,
         sequence_length=7,
         n_classes=4,
         boundary_width=2,
         batch_size=1,
+        metric_name="macro_f1",
+        verbose=0,
+    )
+
+    model = build_lstm_sequence_classifier(
+        sequence_length=7,
+        n_features=2,
+        n_classes=4,
+        lstm_units=(4,),
+        dropout_rate=0.0,
+    )
+
+    callback.set_model(model)
+
+    logs: dict[str, float] = {}
+
+    callback.on_epoch_end(
+        epoch=0,
+        logs=logs,
+    )
+
+    assert "macro_f1" in logs
+    assert 0.0 <= logs["macro_f1"] <= 1.0
+
+
+def test_aggregated_macro_f1_supports_validation_metric_name() -> None:
+    """Expose validation macro-F1 under the validation log name."""
+    x_data = np.zeros(
+        shape=(1, 7, 2),
+        dtype=np.float32,
+    )
+
+    y_data = np.array(
+        [
+            [0, 0, 1, 1, 2, 2, 3],
+        ],
+        dtype=np.int64,
+    )
+
+    metadata = [
+        {
+            "group": "A",
+            "times": [1, 2, 3, 4, 5, 6, 7],
+        }
+    ]
+
+    callback = AggregatedMacroF1(
+        x_data=x_data,
+        y_data=y_data,
+        metadata=metadata,
+        sequence_length=7,
+        n_classes=4,
+        boundary_width=2,
+        batch_size=1,
+        metric_name="val_macro_f1",
         verbose=0,
     )
 
@@ -163,10 +193,12 @@ def test_validation_macro_f1_adds_metric_to_logs() -> None:
 
 
 def test_train_sequence_model_runs() -> None:
-    """Train a tiny model and return Keras history."""
+    """Train a tiny model and return both macro-F1 histories."""
     rng = np.random.default_rng(seed=42)
 
-    x_train = rng.normal(size=(8, 7, 2)).astype(np.float32)
+    x_train = rng.normal(
+        size=(8, 7, 2)
+    ).astype(np.float32)
 
     y_train = rng.integers(
         low=0,
@@ -175,7 +207,17 @@ def test_train_sequence_model_runs() -> None:
         dtype=np.int64,
     )
 
-    x_validation = rng.normal(size=(2, 7, 2)).astype(np.float32)
+    metadata_train = [
+        {
+            "group": f"train_{index}",
+            "times": [1, 2, 3, 4, 5, 6, 7],
+        }
+        for index in range(8)
+    ]
+
+    x_validation = rng.normal(
+        size=(2, 7, 2)
+    ).astype(np.float32)
 
     y_validation = np.array(
         [
@@ -188,27 +230,11 @@ def test_train_sequence_model_runs() -> None:
     metadata_validation = [
         {
             "group": "A",
-            "times": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-            ],
+            "times": [1, 2, 3, 4, 5, 6, 7],
         },
         {
             "group": "B",
-            "times": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-            ],
+            "times": [1, 2, 3, 4, 5, 6, 7],
         },
     ]
 
@@ -224,6 +250,7 @@ def test_train_sequence_model_runs() -> None:
         model,
         x_train=x_train,
         y_train=y_train,
+        metadata_train=metadata_train,
         x_validation=x_validation,
         y_validation=y_validation,
         metadata_validation=metadata_validation,
@@ -243,6 +270,7 @@ def test_train_sequence_model_runs() -> None:
 
     assert "loss" in history.history
     assert "val_loss" in history.history
+    assert "macro_f1" in history.history
     assert "val_macro_f1" in history.history
 
 
@@ -268,15 +296,7 @@ def test_train_sequence_model_rejects_invalid_training_parameters() -> None:
     metadata = [
         {
             "group": "A",
-            "times": [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-                7,
-            ],
+            "times": [1, 2, 3, 4, 5, 6, 7],
         }
     ]
 
@@ -285,6 +305,7 @@ def test_train_sequence_model_rejects_invalid_training_parameters() -> None:
             model,
             x_train=x,
             y_train=y,
+            metadata_train=metadata,
             x_validation=x,
             y_validation=y,
             metadata_validation=metadata,
@@ -298,6 +319,7 @@ def test_train_sequence_model_rejects_invalid_training_parameters() -> None:
             model,
             x_train=x,
             y_train=y,
+            metadata_train=metadata,
             x_validation=x,
             y_validation=y,
             metadata_validation=metadata,
@@ -311,6 +333,7 @@ def test_train_sequence_model_rejects_invalid_training_parameters() -> None:
             model,
             x_train=x,
             y_train=y,
+            metadata_train=metadata,
             x_validation=x,
             y_validation=y,
             metadata_validation=metadata,
