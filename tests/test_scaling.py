@@ -7,16 +7,6 @@ from finance_ml.preprocessing.scaling import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for scaling tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("scaling-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
 
 
 def test_fit_standard_scaler_uses_training_statistics(

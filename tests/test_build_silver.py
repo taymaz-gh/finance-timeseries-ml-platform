@@ -6,17 +6,6 @@ from pyspark.sql import SparkSession
 from finance_ml.lakehouse.build_silver import build_silver_dataframe
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for Silver behavioral tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("silver-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_build_silver_prefers_complete_targets_when_deduplicating(
     spark,

@@ -7,17 +7,6 @@ from finance_ml.preprocessing.encoding import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for encoding tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("encoding-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_fit_category_levels_uses_training_data_only(
     spark,

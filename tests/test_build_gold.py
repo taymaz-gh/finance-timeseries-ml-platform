@@ -6,17 +6,6 @@ from pyspark.sql import SparkSession
 from finance_ml.lakehouse.build_gold import build_gold_features
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for Gold behavioral tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("gold-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_build_gold_creates_lag_and_change_features(
     spark,

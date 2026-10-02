@@ -5,17 +5,6 @@ from pyspark.sql import SparkSession
 from finance_ml.preprocessing.sequences import build_sequences
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for sequence-builder tests."""
-    session = (
-        SparkSession.builder.master("local[1]").appName("sequence-tests").getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
-
 
 def test_build_sequences_preserves_group_boundaries_and_order(
     spark,

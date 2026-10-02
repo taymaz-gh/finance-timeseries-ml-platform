@@ -8,18 +8,6 @@ from finance_ml.pipelines.model_dataset_pipeline import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark():
-    """Creating a local Spark session for model-dataset pipeline tests."""
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("model-dataset-pipeline-tests")
-        .getOrCreate()
-    )
-
-    yield session
-
-    session.stop()
 
 
 def test_prepare_model_dataset_end_to_end(

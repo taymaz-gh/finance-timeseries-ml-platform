@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
@@ -17,6 +18,9 @@ from finance_ml.models.training import (
     train_sequence_model,
 )
 
+from finance_ml.models.artifacts import (
+    save_training_artifacts,
+)
 
 @dataclass
 class SequenceExperimentResult:
@@ -41,12 +45,14 @@ class SequenceExperimentResult:
     history: tf.keras.callbacks.History
     validation_evaluation: dict
     test_evaluation: dict
+    artifact_paths: dict[str, Path] | None = None
 
 
 def run_lstm_experiment(
     *,
     x_train: np.ndarray,
     y_train: np.ndarray,
+    metadata_train: list[dict],
     x_validation: np.ndarray,
     y_validation: np.ndarray,
     metadata_validation: list[dict],
@@ -64,6 +70,7 @@ def run_lstm_experiment(
     batch_size: int = 256,
     patience: int = 5,
     verbose: int = 1,
+    artifact_dir: str | Path | None = None,
 ) -> SequenceExperimentResult:
     """
     Run a complete LSTM sequence-classification experiment.
@@ -73,13 +80,15 @@ def run_lstm_experiment(
         1. Build and compile the configurable LSTM classifier.
         2. Train it using validation macro-F1 for early stopping.
         3. Restore the best model weights.
-        4. Generate validation softmax probabilities.
-        5. Trim sequence boundaries and aggregate overlapping
+        4. Save the training history and learning-curve artifacts,
+           when an artifact directory is provided.
+        5. Generate validation softmax probabilities.
+        6. Trim sequence boundaries and aggregate overlapping
            validation predictions.
-        6. Compute validation accuracy, macro-F1, and confusion matrix.
-        7. Generate test softmax probabilities.
-        8. Apply the same trimming and aggregation procedure to test data.
-        9. Compute final test metrics.
+        7. Compute validation accuracy, macro-F1, and confusion matrix.
+        8. Generate test softmax probabilities.
+        9. Apply the same trimming and aggregation procedure to test data.
+        10. Compute final test metrics.
 
     Args:
         x_train:
@@ -87,6 +96,9 @@ def run_lstm_experiment(
 
         y_train:
             Training integer target tensor.
+
+        metadata_train:
+            Training sequence metadata.
 
         x_validation:
             Validation feature tensor.
@@ -142,6 +154,11 @@ def run_lstm_experiment(
         verbose:
             Keras verbosity level.
 
+        artifact_dir:
+            Optional directory in which training-history and
+            learning-curve artifacts are saved. If ``None``, no
+            training artifacts are saved.
+
     Returns:
         SequenceExperimentResult containing the trained model,
         training history, validation evaluation, and test evaluation.
@@ -159,6 +176,7 @@ def run_lstm_experiment(
         model,
         x_train=x_train,
         y_train=y_train,
+        metadata_train=metadata_train,
         x_validation=x_validation,
         y_validation=y_validation,
         metadata_validation=metadata_validation,
@@ -170,6 +188,14 @@ def run_lstm_experiment(
         patience=patience,
         verbose=verbose,
     )
+
+    artifact_paths = None
+
+    if artifact_dir is not None:
+        artifact_paths = save_training_artifacts(
+            history,
+            artifact_dir,
+        )
 
     validation_probabilities = model.predict(
         x_validation,
@@ -206,4 +232,5 @@ def run_lstm_experiment(
         history=history,
         validation_evaluation=validation_evaluation,
         test_evaluation=test_evaluation,
+        artifact_paths=artifact_paths,
     )
