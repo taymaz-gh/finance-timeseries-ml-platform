@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 
+from collections.abc import Generator
+
 import pytest
 from pyspark.sql import SparkSession
 
 
 @pytest.fixture(scope="session")
-def spark() -> SparkSession:
+def spark() -> Generator[SparkSession, None, None]:
     """Creating a Spark session appropriate for the current environment."""
     running_in_databricks = (
         "DATABRICKS_RUNTIME_VERSION" in os.environ
@@ -41,19 +43,3 @@ def spark() -> SparkSession:
 
     session.stop()
 
-
-    """
-                        pytest
-                      │
-             tests/conftest.py
-                      │
-          ┌───────────┴───────────┐
-          │                       │
-     Databricks                 Local/CI
-          │                       │
- getActiveSession()       builder.master("local[1]")
-          │                       │
-          ▼                       ▼
- existing Spark            new local Spark
- Connect session
-    """
