@@ -44,7 +44,7 @@ class SequenceExperimentResult:
     model: tf.keras.Model
     history: tf.keras.callbacks.History
     validation_evaluation: dict
-    test_evaluation: dict
+    test_evaluation: dict | None
     artifact_paths: dict[str, Path] | None = None
 
 
@@ -70,6 +70,8 @@ def run_lstm_experiment(
     batch_size: int = 256,
     patience: int = 5,
     verbose: int = 1,
+    evaluate_test: bool = True,
+    seed: int = 42,
     artifact_dir: str | Path | None = None,
 ) -> SequenceExperimentResult:
     """
@@ -86,9 +88,9 @@ def run_lstm_experiment(
         6. Trim sequence boundaries and aggregate overlapping
            validation predictions.
         7. Compute validation accuracy, macro-F1, and confusion matrix.
-        8. Generate test softmax probabilities.
-        9. Apply the same trimming and aggregation procedure to test data.
-        10. Compute final test metrics.
+        8. If requested (by `evaluate_test=True`), Generate test softmax probabilities.
+        9. If requested, Apply the same trimming and aggregation procedure to test data.
+        10. If requested, Compute final test metrics.
 
     Args:
         x_train:
@@ -154,6 +156,16 @@ def run_lstm_experiment(
         verbose:
             Keras verbosity level.
 
+        evaluate_test:
+            Whether to evaluate the held-out test set. This should be
+            ``False`` during model selection to prevent test-set
+            information from influencing model-development decisions.
+
+        seed:
+            Random seed used to make model initialization and
+            stochastic training behavior reproducible across
+            comparable experiments.
+
         artifact_dir:
             Optional directory in which training-history and
             learning-curve artifacts are saved. If ``None``, no
@@ -163,6 +175,9 @@ def run_lstm_experiment(
         SequenceExperimentResult containing the trained model,
         training history, validation evaluation, and test evaluation.
     """
+
+    tf.keras.utils.set_random_seed(seed)
+
     model = build_lstm_sequence_classifier(
         sequence_length=sequence_length,
         n_features=n_features,
@@ -212,20 +227,23 @@ def run_lstm_experiment(
         boundary_width=boundary_width,
     )
 
-    test_probabilities = model.predict(
-        x_test,
-        batch_size=batch_size,
-        verbose=0,
-    )
+    test_evaluation = None
 
-    test_evaluation = evaluate_sequence_predictions(
-        test_probabilities,
-        y_test,
-        metadata_test,
-        sequence_length=sequence_length,
-        n_classes=n_classes,
-        boundary_width=boundary_width,
-    )
+    if evaluate_test:
+        test_probabilities = model.predict(
+            x_test,
+            batch_size=batch_size,
+            verbose=0,
+        )
+
+        test_evaluation = evaluate_sequence_predictions(
+            test_probabilities,
+            y_test,
+            metadata_test,
+            sequence_length=sequence_length,
+            n_classes=n_classes,
+            boundary_width=boundary_width,
+        )
 
     return SequenceExperimentResult(
         model=model,
