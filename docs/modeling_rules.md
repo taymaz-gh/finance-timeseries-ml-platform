@@ -1049,6 +1049,23 @@ validation and test partitions.
 The test partition does not influence the training process or model
 selection.
 
+```Pyhton
+dataset
+├── X_train
+├── y_train
+├── train_metadata
+├── X_validation
+├── y_validation
+├── validation_metadata
+├── X_test
+├── y_test
+├── test_metadata
+├── final_feature_columns
+├── train_end
+└── validation_end
+```
+
+
 ### Returned experiment result
 
 The experiment runner returns a structured result containing:
