@@ -189,6 +189,11 @@ def train_sequence_model(
     batch_size: int = 256,
     patience: int = 5,
     verbose: int = 1,
+    reduce_lr_on_plateau: bool = False,
+    lr_factor: float = 0.5,
+    lr_patience: int = 2,
+    min_lr: float = 1e-6,
+    checkpoint_path: str | None = None,
 ) -> tf.keras.callbacks.History:
     """
     Train a sequence classifier using aggregated validation macro-F1.
@@ -197,7 +202,8 @@ def train_sequence_model(
     evaluation convention: boundary trimming followed by overlapping
     prediction aggregation at the original-timestep level.
 
-    Early stopping and model selection use ``val_macro_f1`` only.
+    Early stopping, optional learning-rate reduction, and optional
+    model checkpointing use ``val_macro_f1``.
 
     Args:
         model:
@@ -243,6 +249,26 @@ def train_sequence_model(
         verbose:
             Keras training verbosity.
 
+        reduce_lr_on_plateau:
+            Whether to reduce the learning rate when validation
+            macro-F1 stops improving.
+
+        lr_factor:
+            Multiplicative factor applied to the learning rate when
+            a plateau is detected.
+
+        lr_patience:
+            Number of epochs without validation macro-F1 improvement
+            before reducing the learning rate.
+
+        min_lr:
+            Lower bound for the learning rate.
+
+        checkpoint_path:
+            Optional path for saving the best model according to
+            validation macro-F1. If ``None``, no model checkpoint
+            is saved.
+
     Returns:
         Keras training history.
 
@@ -258,6 +284,16 @@ def train_sequence_model(
 
     if patience < 0:
         raise ValueError("patience must be non-negative.")
+
+    if reduce_lr_on_plateau:
+        if not 0.0 < lr_factor < 1.0:
+            raise ValueError("lr_factor must be between 0 and 1.")
+
+        if lr_patience < 0:
+            raise ValueError("lr_patience must be non-negative.")
+
+        if min_lr < 0:
+            raise ValueError("min_lr must be non-negative.")
 
     training_macro_f1_callback = AggregatedMacroF1(
         x_data=x_train,
@@ -283,6 +319,35 @@ def train_sequence_model(
         verbose=verbose,
     )
 
+    callbacks = [
+        training_macro_f1_callback,
+        validation_macro_f1_callback,
+    ]
+
+    if reduce_lr_on_plateau:
+        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_macro_f1",
+            mode="max",
+            factor=lr_factor,
+            patience=lr_patience,
+            min_lr=min_lr,
+            verbose=verbose,
+        )
+
+        callbacks.append(reduce_lr)
+
+    if checkpoint_path is not None:
+        model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
+            filepath=checkpoint_path,
+            monitor="val_macro_f1",
+            mode="max",
+            save_best_only=True,
+            save_weights_only=False,
+            verbose=verbose,
+        )
+
+        callbacks.append(model_checkpoint)
+
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor="val_macro_f1",
         mode="max",
@@ -290,6 +355,8 @@ def train_sequence_model(
         restore_best_weights=True,
         verbose=verbose,
     )
+
+    callbacks.append(early_stopping)
 
     history = model.fit(
         x_train,
@@ -300,11 +367,7 @@ def train_sequence_model(
         ),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[
-            training_macro_f1_callback,
-            validation_macro_f1_callback,
-            early_stopping,
-        ],
+        callbacks=callbacks,
         shuffle=True,
         verbose=verbose,
     )

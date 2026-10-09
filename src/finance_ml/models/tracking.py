@@ -17,7 +17,10 @@ def log_sequence_experiment(
     *,
     result: SequenceExperimentResult,
     parameters: Mapping[str, Any],
-) -> None:
+    log_model: bool = False,
+    model_name: str = "model",
+    model_input_example: np.ndarray | None = None,
+) -> str | None:
     """
     Log a completed sequence-model experiment to an active MLflow run.
 
@@ -32,12 +35,29 @@ def log_sequence_experiment(
         parameters:
             Model and training parameters to log.
 
+        log_model:
+            Whether to log the trained Keras model to MLflow.
+
+        model_name:
+            Name of the MLflow model artifact.
+
+        model_input_example:
+            Optional representative model input used by MLflow to
+            infer the model signature. Required when ``log_model=True``.
+
+    Returns:
+        The MLflow model URI when the model is logged; otherwise
+        ``None``.
+
     Raises:
         RuntimeError:
             If no MLflow run is active.
 
         FileNotFoundError:
             If a reported artifact path does not exist.
+
+        ValueError:
+            If model logging is enabled without an input example.
     """
     # Importing MLflow lazily keeps the core project testable in
     # environments where MLflow is not installed.
@@ -108,3 +128,35 @@ def log_sequence_experiment(
                 str(artifact_path),
                 artifact_path="training_artifacts",
             )
+
+    if log_model:
+        if model_input_example is None:
+            raise ValueError(
+                "model_input_example is required when "
+                "log_model=True."
+            )
+
+        model_output_example = result.model.predict(
+            model_input_example,
+            verbose=0,
+        )
+
+        signature = mlflow.models.infer_signature(
+            model_input_example,
+            model_output_example,
+        )
+
+        model_info = mlflow.keras.log_model(
+            result.model,
+            name=model_name,
+            signature=signature,
+        )
+
+        mlflow.set_tag(
+            "model_logged",
+            "true",
+        )
+
+        return model_info.model_uri
+
+    return None

@@ -364,3 +364,111 @@ def test_run_lstm_experiment_respects_boundary_trimming() -> None:
     assert result.validation_evaluation["n_predictions"] == expected_predictions
 
     assert result.test_evaluation["n_predictions"] == expected_predictions
+
+
+def test_run_lstm_experiment_saves_best_model_checkpoint(
+    tmp_path,
+) -> None:
+    """Save and report the best model checkpoint when requested."""
+    rng = np.random.default_rng(seed=42)
+
+    sequence_length = 7
+    n_features = 2
+    n_classes = 3
+
+    x_train = rng.normal(
+        size=(6, sequence_length, n_features)
+    ).astype(np.float32)
+
+    y_train = rng.integers(
+        low=0,
+        high=n_classes,
+        size=(6, sequence_length),
+        dtype=np.int64,
+    )
+
+    x_validation = rng.normal(
+        size=(2, sequence_length, n_features)
+    ).astype(np.float32)
+
+    y_validation = rng.integers(
+        low=0,
+        high=n_classes,
+        size=(2, sequence_length),
+        dtype=np.int64,
+    )
+
+    x_test = rng.normal(
+        size=(2, sequence_length, n_features)
+    ).astype(np.float32)
+
+    y_test = rng.integers(
+        low=0,
+        high=n_classes,
+        size=(2, sequence_length),
+        dtype=np.int64,
+    )
+
+    metadata_train = _build_metadata(
+        n_sequences=6,
+        sequence_length=sequence_length,
+        group_prefix="train",
+    )
+
+    metadata_validation = _build_metadata(
+        n_sequences=2,
+        sequence_length=sequence_length,
+        group_prefix="validation",
+    )
+
+    metadata_test = _build_metadata(
+        n_sequences=2,
+        sequence_length=sequence_length,
+        group_prefix="test",
+    )
+
+    # Testing automatic creation of a nonexistent artifact directory.
+    artifact_dir = tmp_path / "new" / "nested" / "artifacts"
+
+    assert not artifact_dir.exists()
+
+    result = run_lstm_experiment(
+        x_train=x_train,
+        y_train=y_train,
+        metadata_train=metadata_train,
+        x_validation=x_validation,
+        y_validation=y_validation,
+        metadata_validation=metadata_validation,
+        x_test=x_test,
+        y_test=y_test,
+        metadata_test=metadata_test,
+        sequence_length=sequence_length,
+        n_features=n_features,
+        n_classes=n_classes,
+        lstm_units=(4,),
+        dropout_rate=0.0,
+        learning_rate=1e-3,
+        boundary_width=2,
+        epochs=2,
+        batch_size=2,
+        patience=1,
+        verbose=0,
+        reduce_lr_on_plateau=True,
+        lr_factor=0.5,
+        lr_patience=1,
+        min_lr=1e-6,
+        save_best_model=True,
+        evaluate_test=False,
+        seed=42,
+        artifact_dir=artifact_dir,
+    )
+
+    assert result.artifact_paths is not None
+
+    checkpoint_path = result.artifact_paths["best_model"]
+
+    assert checkpoint_path.exists()
+    assert checkpoint_path.is_file()
+    assert checkpoint_path.name == "best_model.keras"
+    assert artifact_dir.is_dir()
+    assert checkpoint_path.parent == artifact_dir

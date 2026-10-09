@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import numpy as np
 import pytest
 import tensorflow as tf
@@ -340,4 +341,180 @@ def test_train_sequence_model_rejects_invalid_training_parameters() -> None:
             sequence_length=7,
             n_classes=3,
             patience=-1,
+        )
+
+
+
+def test_train_sequence_model_saves_best_model_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """Save the best complete Keras model when checkpointing is enabled."""
+    rng = np.random.default_rng(seed=42)
+
+    x_train = rng.normal(
+        size=(8, 7, 2)
+    ).astype(np.float32)
+
+    y_train = rng.integers(
+        low=0,
+        high=3,
+        size=(8, 7),
+        dtype=np.int64,
+    )
+
+    metadata_train = [
+        {
+            "group": f"train_{index}",
+            "times": [1, 2, 3, 4, 5, 6, 7],
+        }
+        for index in range(8)
+    ]
+
+    x_validation = rng.normal(
+        size=(2, 7, 2)
+    ).astype(np.float32)
+
+    y_validation = rng.integers(
+        low=0,
+        high=3,
+        size=(2, 7),
+        dtype=np.int64,
+    )
+
+    metadata_validation = [
+        {
+            "group": f"validation_{index}",
+            "times": [1, 2, 3, 4, 5, 6, 7],
+        }
+        for index in range(2)
+    ]
+
+    model = build_lstm_sequence_classifier(
+        sequence_length=7,
+        n_features=2,
+        n_classes=3,
+        lstm_units=(4,),
+        dropout_rate=0.0,
+    )
+
+    checkpoint_path = tmp_path / "best_model.keras"
+
+    train_sequence_model(
+        model,
+        x_train=x_train,
+        y_train=y_train,
+        metadata_train=metadata_train,
+        x_validation=x_validation,
+        y_validation=y_validation,
+        metadata_validation=metadata_validation,
+        sequence_length=7,
+        n_classes=3,
+        boundary_width=2,
+        epochs=2,
+        batch_size=4,
+        patience=1,
+        verbose=0,
+        reduce_lr_on_plateau=True,
+        lr_factor=0.5,
+        lr_patience=1,
+        min_lr=1e-6,
+        checkpoint_path=checkpoint_path,
+    )
+
+    assert checkpoint_path.exists()
+    assert checkpoint_path.is_file()
+
+    loaded_model = tf.keras.models.load_model(
+        checkpoint_path,
+    )
+
+    assert loaded_model.input_shape == (
+        None,
+        7,
+        2,
+    )
+
+    assert loaded_model.output_shape == (
+        None,
+        7,
+        3,
+    )
+
+    # Comparing the restored in-memory model with the saved checkpoint.
+    original_predictions = model.predict(
+        x_validation,
+        verbose=0,
+    )
+
+    checkpoint_predictions = loaded_model.predict(
+        x_validation,
+        verbose=0,
+    )
+
+    np.testing.assert_allclose(
+        original_predictions,
+        checkpoint_predictions,
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+
+
+def test_train_sequence_model_rejects_invalid_reduce_lr_parameters() -> None:
+    """Reject invalid ReduceLROnPlateau configuration."""
+    model = build_lstm_sequence_classifier(
+        sequence_length=7,
+        n_features=2,
+        n_classes=3,
+        lstm_units=(4,),
+    )
+
+    x = np.zeros(
+        shape=(1, 7, 2),
+        dtype=np.float32,
+    )
+
+    y = np.zeros(
+        shape=(1, 7),
+        dtype=np.int64,
+    )
+
+    metadata = [
+        {
+            "group": "A",
+            "times": [1, 2, 3, 4, 5, 6, 7],
+        }
+    ]
+
+    with pytest.raises(ValueError):
+        train_sequence_model(
+            model,
+            x_train=x,
+            y_train=y,
+            metadata_train=metadata,
+            x_validation=x,
+            y_validation=y,
+            metadata_validation=metadata,
+            sequence_length=7,
+            n_classes=3,
+            epochs=1,
+            reduce_lr_on_plateau=True,
+            lr_factor=1.0,
+        )
+
+    with pytest.raises(ValueError):
+        train_sequence_model(
+            model,
+            x_train=x,
+            y_train=y,
+            metadata_train=metadata,
+            x_validation=x,
+            y_validation=y,
+            metadata_validation=metadata,
+            sequence_length=7,
+            n_classes=3,
+            epochs=1,
+            reduce_lr_on_plateau=True,
+            lr_factor=0.5,
+            min_lr=-1.0,
         )
