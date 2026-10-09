@@ -70,6 +70,11 @@ def run_lstm_experiment(
     batch_size: int = 256,
     patience: int = 5,
     verbose: int = 1,
+    reduce_lr_on_plateau: bool = False,
+    lr_factor: float = 0.5,
+    lr_patience: int = 2,
+    min_lr: float = 1e-6,
+    save_best_model: bool = False,
     evaluate_test: bool = True,
     seed: int = 42,
     artifact_dir: str | Path | None = None,
@@ -156,6 +161,26 @@ def run_lstm_experiment(
         verbose:
             Keras verbosity level.
 
+        reduce_lr_on_plateau:
+            Whether to reduce the learning rate when validation
+            macro-F1 stops improving.
+
+        lr_factor:
+            Factor by which the learning rate is reduced when a
+            validation macro-F1 plateau is detected.
+
+        lr_patience:
+            Number of epochs without validation macro-F1 improvement
+            before reducing the learning rate.
+
+        min_lr:
+            Minimum learning rate allowed by ReduceLROnPlateau.
+
+        save_best_model:
+            Whether to save the best complete Keras model according
+            to validation macro-F1. The model is saved inside
+            ``artifact_dir`` as ``best_model.keras``.
+
         evaluate_test:
             Whether to evaluate the held-out test set. This should be
             ``False`` during model selection to prevent test-set
@@ -187,6 +212,22 @@ def run_lstm_experiment(
         learning_rate=learning_rate,
     )
 
+    checkpoint_path = None
+
+    if save_best_model:
+        if artifact_dir is None:
+            raise ValueError(
+                "artifact_dir is required when save_best_model=True."
+            )
+
+        checkpoint_dir = Path(artifact_dir)
+        checkpoint_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        checkpoint_path = checkpoint_dir / "best_model.keras"
+
     history = train_sequence_model(
         model,
         x_train=x_train,
@@ -202,6 +243,11 @@ def run_lstm_experiment(
         batch_size=batch_size,
         patience=patience,
         verbose=verbose,
+        reduce_lr_on_plateau=reduce_lr_on_plateau,
+        lr_factor=lr_factor,
+        lr_patience=lr_patience,
+        min_lr=min_lr,
+        checkpoint_path=checkpoint_path,
     )
 
     artifact_paths = None
@@ -211,6 +257,15 @@ def run_lstm_experiment(
             history,
             artifact_dir,
         )
+
+        if checkpoint_path is not None:
+            if not checkpoint_path.is_file():
+                raise FileNotFoundError(
+                    "Expected best-model checkpoint was not created: "
+                    f"{checkpoint_path}"
+                )
+
+            artifact_paths["best_model"] = checkpoint_path
 
     validation_probabilities = model.predict(
         x_validation,
