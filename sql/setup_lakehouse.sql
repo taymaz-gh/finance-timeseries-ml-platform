@@ -8,3 +8,6 @@ USE CATALOG finance_ml;
 CREATE SCHEMA IF NOT EXISTS bronze;
 CREATE SCHEMA IF NOT EXISTS silver;
 CREATE SCHEMA IF NOT EXISTS gold;
+
+-- Creating the schema for registered ML models.
+CREATE SCHEMA IF NOT EXISTS models;
