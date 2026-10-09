@@ -371,7 +371,12 @@ print("Version:", registered_version.version)
 
 Registration does not retrain the model. Repeated execution should reuse an existing matching version when one can be identified.
 
-**Implementation status:** The model-selection function has been verified against the live MLflow experiment. The registration function is implemented, but its tests and registry-configuration checks are still being completed. Live Unity Catalog registration has not yet been performed.
+**Implementation status:** The model-selection and registration functions
+have been validated with 99 passing automated tests. The final LSTM
+classifier was successfully registered in Unity Catalog as
+`finance_ml.models.lstm_risk_classifier`, version 1. The registered
+model was independently loaded, and its predictions matched those
+of the original MLflow LoggedModel.
 
 ## 6. Reproducibility
 
