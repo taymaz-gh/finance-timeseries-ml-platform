@@ -19,6 +19,7 @@ dependencies = [
     "databricks-sqlalchemy>=2.0",
     "tensorflow>=2.21,<2.22",
     "matplotlib>=3.9,<4.0",
+    "mlflow>=3.12,<4.0",
 ]
 
 
