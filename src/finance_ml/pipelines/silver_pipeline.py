@@ -1,4 +1,4 @@
-"""Running the Silver transformation and persisting the Silver table."""
+"""Running Silver transformations and persisting the Silver table."""
 
 from __future__ import annotations
 
@@ -9,25 +9,19 @@ def run_silver_pipeline(
     spark,
     source_table: str = "finance_ml.bronze.account_events_raw",
     target_table: str = "finance_ml.silver.account_events_clean",
+    *,
+    require_labels: bool = True,
 ):
-    """
-    Loading Bronze data, building Silver data, and persisting the result.
-
-    Args:
-        spark:
-            Active Spark session.
-        source_table:
-            Fully qualified Bronze source table.
-        target_table:
-            Fully qualified Silver destination table.
-
-    Returns:
-        Persisted Silver Spark DataFrame.
-    """
+    """Transform Bronze to Silver, preserving labeled training as default."""
     bronze_df = spark.table(source_table)
 
-    silver_df = build_silver_dataframe(bronze_df)
+    if require_labels:
+        silver_df = build_silver_dataframe(bronze_df)
+    else:
+        silver_df = build_silver_dataframe(
+            bronze_df,
+            require_labels=False,
+        )
 
-    (silver_df.write.mode("overwrite").saveAsTable(target_table))
-
+    silver_df.write.mode("overwrite").saveAsTable(target_table)
     return silver_df

@@ -220,3 +220,98 @@ def generate_financial_timeseries(
             )
 
     return pd.DataFrame(records)
+
+
+def generate_future_observations(
+    latest_accounts: pd.DataFrame,
+    *,
+    n_days: int = 14,
+    random_seed: int = 84,
+) -> pd.DataFrame:
+    """Generate label-free future rows using the latest observed account state.
+
+    This is a reproducible *approximate continuation*: the original simulator's
+    latent stress and credit limits were not persisted. Estimating starting
+    values from observed fields does not recover those latent quantities.
+
+    No risk-state labels are returned or used by inference.
+    """
+    if n_days < 1:
+        raise ValueError("n_days must be positive")
+    required = {
+        "account_id", "date", "account_type", "balance",
+        "credit_utilization", "payment_ratio", "days_past_due",
+    }
+    missing = required - set(latest_accounts.columns)
+    if missing:
+        raise ValueError(f"Missing latest-account columns: {sorted(missing)}")
+    if latest_accounts.empty:
+        raise ValueError("latest_accounts cannot be empty")
+    if latest_accounts["account_id"].duplicated().any():
+        raise ValueError("latest_accounts must contain one row per account")
+    rng = np.random.default_rng(random_seed)
+    records = []
+    latest = latest_accounts.sort_values("account_id")
+    for row in latest.itertuples(index=False):
+        account_id = row.account_id
+        date = pd.Timestamp(row.date)
+        if pd.isna(date):
+            raise ValueError("Account date cannot be missing")
+        account_type = row.account_type
+        balance = float(row.balance)
+        if not np.isfinite(balance):
+            raise ValueError(f"Missing balance for {account_id}")
+        utilization = float(row.credit_utilization)
+        payment = float(row.payment_ratio)
+        past_due = float(row.days_past_due)
+        if not all(map(np.isfinite, (utilization, payment, past_due))):
+            raise ValueError(f"Missing financial state for {account_id}")
+        # Inferring the unobserved stress level from contemporaneous signals.
+        stress = float(np.clip(
+            0.45 * utilization + 0.45 * (1 - payment)
+            + 0.10 * min(past_due / 45, 1.0),
+            0.0, 1.0,
+        ))
+        baseline_stress = stress
+        # The real credit limit is latent; using a plausible stable proxy.
+        credit_limit = max(3000.0, float(getattr(row, "amount_due", 100.0)) * 30)
+        # Generating consecutive future dates after the last observed date.
+        future_dates = pd.date_range(
+            start=date,
+            periods=n_days + 1,
+            freq="D",
+        )[1:]
+        for day in range(1, n_days + 1):
+            shock = rng.normal(0, 0.05)
+            if rng.random() < 0.015:
+                shock += rng.uniform(0.15, 0.35)
+            stress = float(np.clip(
+                0.85 * stress + 0.15 * baseline_stress + shock, 0, 1
+            ))
+            cash_inflow = max(0.0, rng.normal(180 * (1 - 0.45 * stress), 60))
+            cash_outflow = max(0.0, rng.normal(150 * (1 + 0.55 * stress), 55))
+            balance = max(0.0, balance + cash_inflow - cash_outflow)
+            transactions = max(0, int(rng.poisson(max(2, 10 - 3 * stress))))
+            utilization = float(np.clip(rng.normal(0.25 + 0.65 * stress, 0.08), 0, 1))
+            due = max(20.0, credit_limit * utilization * rng.uniform(0.015, 0.040))
+            expected_payment = float(np.clip(1.05 - 0.90 * stress, 0.05, 1))
+            payment = float(np.clip(rng.normal(expected_payment, 0.08), 0, 1))
+            paid = due * payment
+            past_due = (0 if stress < 0.45 else max(0, int(rng.normal(45 * stress, 8))))
+            records.append(
+                {
+                    "account_id": account_id,
+                    "date": future_dates[day - 1],
+                    "account_type": account_type,
+                    "balance": round(balance, 2),
+                    "cash_inflow": round(cash_inflow, 2),
+                    "cash_outflow": round(cash_outflow, 2),
+                    "transaction_count": transactions,
+                    "credit_utilization": round(utilization, 4),
+                    "amount_due": round(due, 2),
+                    "amount_paid": round(paid, 2),
+                    "payment_ratio": round(payment, 4),
+                    "days_past_due": int(past_due),
+                }
+            )
+    return pd.DataFrame.from_records(records)
