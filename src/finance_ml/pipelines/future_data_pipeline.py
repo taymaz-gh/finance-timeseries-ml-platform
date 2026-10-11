@@ -42,7 +42,11 @@ def prepare_future_data(
            for name in targets.values()):
         raise ValueError("Refusing to overwrite original training tables")
 
-    history = spark.table(history_silver_table)
+    # Excluding supervised targets from inference data.
+    history = (
+        spark.table(history_silver_table)
+        .drop("risk_state", "risk_state_name")
+    )
     maximum_date = history.agg(F.max("date").alias("latest")).first()["latest"]
     if maximum_date is None:
         raise ValueError("The historical Silver table is empty")

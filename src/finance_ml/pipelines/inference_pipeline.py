@@ -23,6 +23,7 @@ INFERENCE_CONFIG: dict[str, Any] = {
     "group_col": "account_id",
     "time_col": "date",
     "batch_size": 256,
+    "boundary_width": None,   # None uses the saved model's setting.
 }
 
 
@@ -80,33 +81,38 @@ def transform_for_inference(gold_df, metadata, *, group_col="account_id", time_c
     return df.select(group_col, time_col, *features)
 
 
-def run_inference_pipeline(config=None, *, spark=None, registry_client=None, tracking_client=None, model_loader=None):
-    """Query Gold data, recover the UC model contract, and predict per entity/time.
+def run_inference_pipeline(
+    config=None, *, spark=None, gold_df=None,
+    registry_client=None, tracking_client=None, model_loader=None,
+):
+    """Score a Gold DataFrame or query a Gold table using the pinned UC model.
 
-    Returns a dictionary containing predictions and model provenance. It does
-    not write results to a serving table or perform streaming inference.
+    Passing gold_df bypasses querying source_table. Neither route performs
+    training, preprocessing fitting, or prediction-table writes.
     """
     options = {**INFERENCE_CONFIG, **(dict(config) if config else {})}
     if spark is None:
         raise ValueError("A SparkSession is required for the current inference pipeline")
-    table = options["source_table"]
-    if len(table.split(".")) != 3 or not all(p.replace("_", "").isalnum() for p in table.split(".")):
-        raise ValueError("source_table must be catalog.schema.table")
+    if gold_df is None:
+        table = options["source_table"]
+        if len(table.split(".")) != 3 or not all(p.replace("_", "").isalnum() for p in table.split(".")):
+            raise ValueError("source_table must be catalog.schema.table")
     bundle = load_model_bundle(
         options["model_name"], options["model_version"],
         registry_client=registry_client, tracking_client=tracking_client, model_loader=model_loader,
     )
-    sql = f"SELECT * FROM {table}"
-    method = options["query_method"]
-    if method == "spark":
-        gold_df = query_with_spark(spark, sql)
-    elif method in ("connector", "sqlalchemy"):
-        pandas_df = query_with_sql_connector(sql) if method == "connector" else query_with_sqlalchemy(sql)
-        if pandas_df.empty:
-            raise ValueError("Query returned no records")
-        gold_df = spark.createDataFrame(pandas_df)
-    else:
-        raise ValueError("query_method must be spark, connector, or sqlalchemy")
+    if gold_df is None:
+        sql = f"SELECT * FROM {table}"
+        method = options["query_method"]
+        if method == "spark":
+            gold_df = query_with_spark(spark, sql)
+        elif method in ("connector", "sqlalchemy"):
+            pandas_df = query_with_sql_connector(sql) if method == "connector" else query_with_sqlalchemy(sql)
+            if pandas_df.empty:
+                raise ValueError("Query returned no records")
+            gold_df = spark.createDataFrame(pandas_df)
+        else:
+            raise ValueError("query_method must be spark, connector, or sqlalchemy")
     m = bundle.metadata
     group_col, time_col = options["group_col"], options["time_col"]
     prepared = transform_for_inference(gold_df, m, group_col=group_col, time_col=time_col)
@@ -115,10 +121,23 @@ def run_inference_pipeline(config=None, *, spark=None, registry_client=None, tra
         group_col=group_col, time_col=time_col,
         sequence_length=int(m["sequence_length"]), stride=int(m["stride"]),
     )
+    # Using the saved model `boundary_width` configuration unless explicitly overridden.
+    boundary_width = options["boundary_width"]
+    if boundary_width is None:
+        boundary_width = int(m["boundary_width"])
+    if (
+        not isinstance(boundary_width, int)
+        or isinstance(boundary_width, bool)
+        or not 0 <= boundary_width < (int(m["sequence_length"]) + 1) // 2
+    ):
+        raise ValueError(
+            "boundary_width must be a non-negative integer that "
+            "leaves at least one timestep in each sequence."
+        )
     predictions = predict_and_aggregate(
         bundle.model, X, sequence_metadata,
         sequence_length=int(m["sequence_length"]),
-        boundary_width=int(m["boundary_width"]),
+        boundary_width=boundary_width,
         batch_size=int(options["batch_size"]),
     )
     return {
