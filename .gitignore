@@ -33,6 +33,7 @@ artifacts/*
 # Private documentation
 help.txt
 temp.ipynb
+private_notes/
 
 # Local MLflow tracking database
 mlflow.db

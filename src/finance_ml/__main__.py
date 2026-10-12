@@ -1,7 +1,7 @@
-def main() -> None:
-    """Running the package entry point."""
-    print("Financial Time-Series ML Platform")
+"""Running the CLI through python -m finance_ml."""
+
+from finance_ml.cli import app
 
 
 if __name__ == "__main__":
-    main()
+    app()
