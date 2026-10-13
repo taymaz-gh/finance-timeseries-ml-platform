@@ -114,3 +114,92 @@ def test_training_cli_requires_dry_run() -> None:
 
     assert result.exit_code == 2
     assert "Training execution is not yet connected" in result.output
+
+
+def test_training_cli_loads_yaml(tmp_path) -> None:
+    """Loading experiment configuration through the CLI."""
+    path = tmp_path / "training.yaml"
+    path.write_text(
+        "epochs: 20\nbatch_size: 128\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["train", "--config", str(path), "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+
+    config = _extract_training_config(result.output)
+    assert config["epochs"] == 20
+    assert config["batch_size"] == 128
+
+
+def test_training_cli_override_precedence(tmp_path) -> None:
+    """Giving explicit CLI arguments priority over YAML values."""
+    path = tmp_path / "training.yaml"
+    path.write_text(
+        "epochs: 20\nbatch_size: 128\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "train",
+            "--config",
+            str(path),
+            "--epochs",
+            "35",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+
+    config = _extract_training_config(result.output)
+
+    assert config["epochs"] == 35
+    assert config["batch_size"] == 128
+
+
+def test_training_cli_rejects_invalid_yaml_value(tmp_path) -> None:
+    """Rejecting invalid training parameters supplied through YAML."""
+    path = tmp_path / "training.yaml"
+    path.write_text("epochs: -5\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["train", "--config", str(path), "--dry-run"],
+    )
+
+    assert result.exit_code == 2
+    assert "epochs must be a positive integer" in result.output
+
+
+def test_training_cli_rejects_unknown_yaml_key(tmp_path) -> None:
+    """Rejecting misspelled configuration parameters."""
+    path = tmp_path / "training.yaml"
+    path.write_text("epohcs: 20\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["train", "--config", str(path), "--dry-run"],
+    )
+
+    assert result.exit_code == 2
+    assert "Unknown configuration keys" in result.output
+
+
+def test_training_cli_rejects_missing_yaml_file(tmp_path) -> None:
+    """Reporting missing configuration files clearly."""
+    path = tmp_path / "missing.yaml"
+
+    result = runner.invoke(
+        app,
+        ["train", "--config", str(path), "--dry-run"],
+    )
+
+    assert result.exit_code == 2
+    assert "Configuration file not found" in result.output

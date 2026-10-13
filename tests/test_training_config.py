@@ -102,3 +102,114 @@ print(json.dumps({
     assert report["tensorflow_imported"] is False
     assert report["pipeline_imported"] is False
     assert report["dry_run_completed"] is True
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("epochs", 0),
+        ("epochs", -5),
+        ("epochs", 2.5),
+        ("epochs", True),
+        ("epochs", "20"),
+        ("batch_size", 0),
+        ("batch_size", -1),
+        ("batch_size", 128.5),
+        ("batch_size", False),
+        ("batch_size", "128"),
+    ],
+)
+def test_reject_invalid_training_integer(
+    key: str,
+    value: object,
+) -> None:
+    """Rejecting nonpositive and noninteger training parameters."""
+    config = {**TRAINING_CONFIG, key: value}
+
+    with pytest.raises(ValueError, match=f"{key} must be a positive integer"):
+        validate_training_config(config)
+
+
+@pytest.mark.parametrize(
+    ("updates", "error"),
+    [
+        ({"learning_rate": -0.01}, "learning_rate"),
+        ({"learning_rate": float("nan")}, "learning_rate"),
+        ({"learning_rate": float("inf")}, "learning_rate"),
+        ({"dropout_rate": 1.5}, "dropout_rate"),
+        ({"dropout_rate": -0.1}, "dropout_rate"),
+        ({"train_fraction": 1.5}, "train_fraction"),
+        ({"validation_fraction": 0.0}, "validation_fraction"),
+        (
+            {"train_fraction": 0.8, "validation_fraction": 0.3},
+            "train_fraction.*validation_fraction",
+        ),
+        ({"sequence_length": 0}, "sequence_length"),
+        ({"stride": 0}, "stride"),
+        ({"n_classes": 1}, "n_classes"),
+        ({"patience": -1}, "patience"),
+        ({"boundary_width": -1}, "boundary_width"),
+        ({"lstm_units": []}, "lstm_units"),
+        ({"lstm_units": [64, -32]}, "lstm_units"),
+        ({"lstm_units": [True]}, "lstm_units"),
+        ({"reduce_lr_on_plateau": "yes"}, "reduce_lr_on_plateau"),
+        (
+            {"reduce_lr_on_plateau": True, "lr_factor": 1.5},
+            "lr_factor",
+        ),
+        (
+            {"reduce_lr_on_plateau": True, "lr_patience": -1},
+            "lr_patience",
+        ),
+        (
+            {"reduce_lr_on_plateau": True, "min_lr": -0.1},
+            "min_lr",
+        ),
+    ],
+)
+def test_reject_invalid_training_hyperparameters(
+    updates: dict,
+    error: str,
+) -> None:
+    """Rejecting invalid ML hyperparameters before execution."""
+    config = {**TRAINING_CONFIG, **updates}
+
+    with pytest.raises(ValueError, match=error):
+        validate_training_config(config)
+
+
+def test_yaml_style_lstm_units_are_supported() -> None:
+    """Accepting list-valued LSTM units from YAML."""
+    config = {**TRAINING_CONFIG, "lstm_units": [64, 32]}
+
+    validate_training_config(config)
+
+
+def test_valid_learning_rate_scheduler_configuration() -> None:
+    """Accepting valid optional learning-rate scheduler settings."""
+    config = {
+        **TRAINING_CONFIG,
+        "reduce_lr_on_plateau": True,
+        "lr_factor": 0.5,
+        "lr_patience": 2,
+        "min_lr": 1e-6,
+    }
+
+    validate_training_config(config)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "save_keras_checkpoint",
+        "log_to_mlflow",
+        "register_in_uc",
+        "reduce_lr_on_plateau",
+    ],
+)
+def test_reject_string_boolean_configuration(key: str) -> None:
+    """Rejecting strings where actual boolean values are required."""
+    config = {**TRAINING_CONFIG, key: "false"}
+
+    with pytest.raises(ValueError, match=f"{key} must be a boolean"):
+        validate_training_config(config)

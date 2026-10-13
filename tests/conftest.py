@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import os
 
+import sys
+
+# Matching PySpark workers to the active pytest Python interpreter.
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+
 from collections.abc import Generator
 
 import pytest
@@ -42,4 +48,3 @@ def spark() -> Generator[SparkSession, None, None]:
     yield session
 
     session.stop()
-

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import typer
 
+from pathlib import Path
+
 from finance_ml import __version__
 
 
@@ -49,6 +51,11 @@ def train(
         "--dry-run",
         help="Validate and display settings without training.",
     ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        help="YAML file containing training configuration overrides.",
+    ),
     epochs: int | None = typer.Option(
         None,
         "--epochs",
@@ -67,34 +74,54 @@ def train(
         help="Training mode: development or final.",
     ),
 ) -> None:
-    """Validate training settings without starting model training."""
+    """Validate training configuration without starting model training."""
     import json
 
+    from finance_ml.config.config_loader import load_yaml_config
     from finance_ml.config.training_config import (
         TRAINING_CONFIG,
         validate_training_config,
     )
 
-    # Copying defaults to avoid modifying the shared configuration.
+    # Copying the default training configuration.
     options = dict(TRAINING_CONFIG)
 
-    # Applying only options explicitly supplied by the user.
-    overrides = {
+    # Loading experiment-specific YAML overrides.
+    if config is not None:
+        try:
+            options.update(
+                load_yaml_config(
+                    config,
+                    allowed_keys=TRAINING_CONFIG,
+                )
+            )
+        except ValueError as exc:
+            typer.echo(f"Configuration error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+
+    # Applying explicit CLI overrides with highest precedence.
+    cli_overrides = {
         "epochs": epochs,
         "batch_size": batch_size,
         "run_mode": run_mode,
     }
 
     options.update(
-        {key: value for key, value in overrides.items() if value is not None}
+        {key: value for key, value in cli_overrides.items() if value is not None}
     )
 
+    # Validating the resolved training configuration.
     try:
         validate_training_config(options)
-    except ValueError as exc:
-        typer.echo(f"Invalid training configuration: {exc}", err=True)
+
+    except (ValueError, TypeError, KeyError) as exc:
+        typer.echo(
+            f"Invalid training configuration: {exc}",
+            err=True,
+        )
         raise typer.Exit(code=2) from exc
 
+    # Keeping actual training disabled until the execution adapter exists.
     if not dry_run:
         typer.echo(
             "Training execution is not yet connected. "
