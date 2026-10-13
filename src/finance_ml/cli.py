@@ -40,3 +40,38 @@ def check() -> None:
     typer.echo("Financial Time-Series ML Platform")
     typer.echo(f"Version: {__version__}")
     typer.echo("CLI installation: OK")
+
+
+@app.command()
+def train(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate and display training settings without training.",
+    ),
+) -> None:
+    """Preparing a training run without starting it."""
+
+    if not dry_run:
+        typer.echo(
+            "Training execution is not yet connected. "
+            "Use --dry-run to inspect the configuration.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    # Loading the existing training configuration only when invoked.
+    from finance_ml.pipelines.model_pipeline import (
+        CONFIG,
+        _validate_config,
+    )
+
+    import json
+
+    options = dict(CONFIG)
+    _validate_config(options)
+
+    typer.echo("Training configuration:")
+    typer.echo(json.dumps(options, indent=2))
+    typer.echo("Dry run complete. No training was started.")
+
