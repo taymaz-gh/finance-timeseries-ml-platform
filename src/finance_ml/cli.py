@@ -47,10 +47,53 @@ def train(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Validate and display training settings without training.",
+        help="Validate and display settings without training.",
+    ),
+    epochs: int | None = typer.Option(
+        None,
+        "--epochs",
+        min=1,
+        help="Override the maximum number of training epochs.",
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Override the training batch size.",
+    ),
+    run_mode: str | None = typer.Option(
+        None,
+        "--run-mode",
+        help="Training mode: development or final.",
     ),
 ) -> None:
-    """Preparing a training run without starting it."""
+    """Validate training settings without starting model training."""
+    import json
+
+    from finance_ml.config.training_config import (
+        TRAINING_CONFIG,
+        validate_training_config,
+    )
+
+    # Copying defaults to avoid modifying the shared configuration.
+    options = dict(TRAINING_CONFIG)
+
+    # Applying only options explicitly supplied by the user.
+    overrides = {
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "run_mode": run_mode,
+    }
+
+    options.update(
+        {key: value for key, value in overrides.items() if value is not None}
+    )
+
+    try:
+        validate_training_config(options)
+    except ValueError as exc:
+        typer.echo(f"Invalid training configuration: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
     if not dry_run:
         typer.echo(
@@ -59,17 +102,6 @@ def train(
             err=True,
         )
         raise typer.Exit(code=2)
-
-    # Loading the existing training configuration only when invoked.
-    from finance_ml.config.training_config import (
-        TRAINING_CONFIG,
-        validate_training_config,
-    )
-
-    import json
-
-    options = dict(TRAINING_CONFIG)
-    validate_training_config(options)
 
     typer.echo("Training configuration:")
     typer.echo(json.dumps(options, indent=2))
