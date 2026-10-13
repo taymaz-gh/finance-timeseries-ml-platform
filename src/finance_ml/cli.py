@@ -61,17 +61,16 @@ def train(
         raise typer.Exit(code=2)
 
     # Loading the existing training configuration only when invoked.
-    from finance_ml.pipelines.model_pipeline import (
-        CONFIG,
-        _validate_config,
+    from finance_ml.config.training_config import (
+        TRAINING_CONFIG,
+        validate_training_config,
     )
 
     import json
 
-    options = dict(CONFIG)
-    _validate_config(options)
+    options = dict(TRAINING_CONFIG)
+    validate_training_config(options)
 
     typer.echo("Training configuration:")
     typer.echo(json.dumps(options, indent=2))
     typer.echo("Dry run complete. No training was started.")
-
