@@ -73,8 +73,18 @@ def train(
         "--run-mode",
         help="Training mode: development or final.",
     ),
+    query_method: str | None = typer.Option(
+        None,
+        "--query-method",
+        help="Data query method: spark, connector, or sqlalchemy.",
+    ),
+    allow_uc_registration: bool = typer.Option(
+        False,
+        "--allow-uc-registration",
+        help="Explicitly permit Unity Catalog model registration.",
+    ),
 ) -> None:
-    """Validate training configuration without starting model training."""
+    """Validate training configuration and optionally execute training."""
     import json
 
     from finance_ml.config.config_loader import load_yaml_config
@@ -104,6 +114,7 @@ def train(
         "epochs": epochs,
         "batch_size": batch_size,
         "run_mode": run_mode,
+        "query_method": query_method,
     }
 
     options.update(
@@ -121,15 +132,47 @@ def train(
         )
         raise typer.Exit(code=2) from exc
 
-    # Keeping actual training disabled until the execution adapter exists.
+    # Validating execution-specific safeguards without modifying ML defaults.
     if not dry_run:
-        typer.echo(
-            "Training execution is not yet connected. "
-            "Use --dry-run to inspect the configuration.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
+        if options["register_in_uc"] and not allow_uc_registration:
+            typer.echo(
+                "Unity Catalog registration requires " "--allow-uc-registration.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
 
+        if options["query_method"] == "spark":
+            typer.echo(
+                "Standalone CLI training cannot access the configured "
+                "Databricks Unity Catalog table through local Spark. "
+                "Use --query-method connector or sqlalchemy. "
+                "For managed Databricks Spark, call the training runner "
+                "with the existing SparkSession.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    # Displaying the resolved configuration before any execution.
     typer.echo("Training configuration:")
     typer.echo(json.dumps(options, indent=2))
-    typer.echo("Dry run complete. No training was started.")
+
+    if dry_run:
+        typer.echo("Dry run complete. No training was started.")
+        return
+
+    # Loading training infrastructure only for actual execution.
+    from finance_ml.pipelines.training_runner import run_training
+
+    typer.echo("Starting model training...")
+
+    try:
+        result = run_training(options)
+    except Exception as exc:
+        typer.echo(
+            f"Training failed: {exc}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("Training completed successfully.")
+    typer.echo(f"MLflow model URI: {result.get('model_uri')}")
