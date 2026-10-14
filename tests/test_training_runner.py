@@ -135,8 +135,8 @@ def test_reuses_active_spark_session(monkeypatch) -> None:
     get_or_create.assert_not_called()
 
 
-def test_get_or_create_does_not_imply_ownership(monkeypatch) -> None:
-    """Avoiding ownership assumptions for getOrCreate results."""
+def test_new_local_session_is_owned(monkeypatch) -> None:
+    """Owning Spark only when no context existed before acquisition."""
     from pyspark.sql import SparkSession
 
     spark = Mock()
@@ -146,19 +146,142 @@ def test_get_or_create_does_not_imply_ownership(monkeypatch) -> None:
     builder.config.return_value = builder
     builder.getOrCreate.return_value = spark
 
-    monkeypatch.setattr(
-        SparkSession,
-        "getActiveSession",
-        lambda: None,
-    )
-    monkeypatch.setattr(
-        SparkSession,
-        "builder",
-        builder,
-    )
+    monkeypatch.setattr(SparkSession, "getActiveSession", lambda: None)
+    monkeypatch.setattr(SparkSession, "builder", builder)
+    monkeypatch.setattr(training_runner, "_existing_spark_context", lambda: False)
+
+    session, owns_spark = training_runner._create_local_spark_session()
+
+    assert session is spark
+    assert owns_spark is True
+
+
+def test_existing_context_is_not_owned(monkeypatch) -> None:
+    """Preserving Spark resources created by another component."""
+    from pyspark.sql import SparkSession
+
+    spark = Mock()
+    builder = Mock()
+    builder.master.return_value = builder
+    builder.appName.return_value = builder
+    builder.config.return_value = builder
+    builder.getOrCreate.return_value = spark
+
+    monkeypatch.setattr(SparkSession, "getActiveSession", lambda: None)
+    monkeypatch.setattr(SparkSession, "builder", builder)
+    monkeypatch.setattr(training_runner, "_existing_spark_context", lambda: True)
 
     session, owns_spark = training_runner._create_local_spark_session()
 
     assert session is spark
     assert owns_spark is False
-    builder.getOrCreate.assert_called_once()
+
+
+def test_cleanup_failure_preserves_training_error(monkeypatch) -> None:
+    """Keeping the training error primary when Spark cleanup also fails."""
+    spark = Mock()
+    spark.stop.side_effect = RuntimeError("Spark stop failed")
+
+    monkeypatch.setattr(
+        training_runner,
+        "_create_local_spark_session",
+        lambda: (spark, True),
+    )
+
+    pipeline = Mock(side_effect=RuntimeError("Model training failed"))
+
+    with pytest.raises(RuntimeError, match="Model training failed") as info:
+        training_runner.run_training(
+            TRAINING_CONFIG,
+            pipeline_fn=pipeline,
+        )
+
+    assert "Spark cleanup also failed" in "\n".join(info.value.__notes__)
+    spark.stop.assert_called_once()
+
+
+def test_cleanup_failure_after_success_is_reported(monkeypatch) -> None:
+    """Reporting cleanup failures even when model training succeeds."""
+    spark = Mock()
+    spark.stop.side_effect = RuntimeError("Spark stop failed")
+
+    monkeypatch.setattr(
+        training_runner,
+        "_create_local_spark_session",
+        lambda: (spark, True),
+    )
+
+    pipeline = Mock(return_value={"model_uri": None})
+
+    with pytest.raises(RuntimeError, match="Spark stop failed"):
+        training_runner.run_training(
+            TRAINING_CONFIG,
+            pipeline_fn=pipeline,
+        )
+
+    spark.stop.assert_called_once()
+
+
+def test_external_spark_not_stopped_on_failure() -> None:
+    """Preserving a caller-provided session after a training failure."""
+    spark = Mock()
+    pipeline = Mock(side_effect=RuntimeError("Training failed"))
+
+    with pytest.raises(RuntimeError, match="Training failed"):
+        training_runner.run_training(
+            TRAINING_CONFIG,
+            spark=spark,
+            pipeline_fn=pipeline,
+        )
+
+    spark.stop.assert_not_called()
+
+
+def test_invalid_synthetic_size_rejected_before_spark(monkeypatch) -> None:
+    """Checking synthetic resource limits before creating Spark."""
+    from finance_ml.config.training_config import TRAINING_CONFIG
+
+    acquire = Mock()
+    monkeypatch.setattr(training_runner, "_create_local_spark_session", acquire)
+
+    config = {
+        **TRAINING_CONFIG,
+        "log_to_mlflow": False,
+        "register_in_uc": False,
+    }
+
+    with pytest.raises(ValueError, match="row limit"):
+        training_runner.run_training(
+            config,
+            data_source="synthetic",
+            synthetic_accounts=1000,
+            synthetic_days=60,
+            pipeline_fn=Mock(),
+        )
+
+    acquire.assert_not_called()
+
+
+def test_insufficient_synthetic_history_rejected_before_spark(
+    monkeypatch,
+) -> None:
+    """Rejecting configurations unable to form validation sequences."""
+    acquire = Mock()
+    monkeypatch.setattr(training_runner, "_create_local_spark_session", acquire)
+
+    config = {
+        **TRAINING_CONFIG,
+        "log_to_mlflow": False,
+        "register_in_uc": False,
+    }
+
+    with pytest.raises(ValueError, match="chronological partition"):
+        training_runner.run_training(
+            config,
+            data_source="synthetic",
+            synthetic_accounts=8,
+            synthetic_days=20,
+            pipeline_fn=Mock(),
+        )
+
+    acquire.assert_not_called()

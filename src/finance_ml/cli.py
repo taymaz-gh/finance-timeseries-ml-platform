@@ -83,6 +83,29 @@ def train(
         "--allow-uc-registration",
         help="Explicitly permit Unity Catalog model registration.",
     ),
+    data_source: str = typer.Option(
+        "databricks",
+        "--data-source",
+        help="Training data source: databricks or synthetic.",
+    ),
+    synthetic_accounts: int = typer.Option(
+        20,
+        "--synthetic-accounts",
+        min=1,
+        help="Number of synthetic training accounts.",
+    ),
+    synthetic_days: int = typer.Option(
+        60,
+        "--synthetic-days",
+        min=1,
+        help="Number of historical days for synthetic training.",
+    ),
+    synthetic_seed: int = typer.Option(
+        42,
+        "--synthetic-seed",
+        min=0,
+        help="Synthetic training random seed.",
+    ),
 ) -> None:
     """Validate training configuration and optionally execute training."""
     import json
@@ -132,6 +155,22 @@ def train(
         )
         raise typer.Exit(code=2) from exc
 
+    if data_source not in {"databricks", "synthetic"}:
+        typer.echo(
+            "Invalid data source: choose databricks or synthetic.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if data_source == "synthetic":
+        if options["log_to_mlflow"] or options["register_in_uc"]:
+            typer.echo(
+                "Synthetic training requires log_to_mlflow=false "
+                "and register_in_uc=false.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
     # Validating execution-specific safeguards without modifying ML defaults.
     if not dry_run:
         if options["register_in_uc"] and not allow_uc_registration:
@@ -141,7 +180,7 @@ def train(
             )
             raise typer.Exit(code=2)
 
-        if options["query_method"] == "spark":
+        if data_source == "databricks" and options["query_method"] == "spark":
             typer.echo(
                 "Standalone CLI training cannot access the configured "
                 "Databricks Unity Catalog table through local Spark. "
@@ -152,8 +191,22 @@ def train(
             )
             raise typer.Exit(code=2)
 
-    # Displaying the resolved configuration before any execution.
+    # Displaying the selected data source and its generation parameters.
+    typer.echo(f"Data source: {data_source}")
+
+    if data_source == "synthetic":
+        typer.echo("Synthetic data configuration:")
+        typer.echo(f"  Accounts: {synthetic_accounts}")
+        typer.echo(f"  Historical days: {synthetic_days}")
+        typer.echo(f"  Random seed: {synthetic_seed}")
+        typer.echo(
+            "  Data acquisition: in-memory generation "
+            "followed by local Spark Silver/Gold processing"
+        )
+
+    # Displaying the resolved model configuration.
     typer.echo("Training configuration:")
+
     typer.echo(json.dumps(options, indent=2))
 
     if dry_run:
@@ -166,7 +219,16 @@ def train(
     typer.echo("Starting model training...")
 
     try:
-        result = run_training(options)
+        if data_source == "synthetic":
+            result = run_training(
+                options,
+                data_source="synthetic",
+                synthetic_accounts=synthetic_accounts,
+                synthetic_days=synthetic_days,
+                synthetic_seed=synthetic_seed,
+            )
+        else:
+            result = run_training(options)
     except Exception as exc:
         typer.echo(
             f"Training failed: {exc}",

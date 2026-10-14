@@ -108,6 +108,7 @@ def run_model_pipeline(
     config: Mapping[str, Any] | None = None,
     *,
     spark: Any = None,
+    gold_df: Any = None,
 ) -> dict[str, Any]:
     """Query, preprocess, train, evaluate, optionally log/register an LSTM.
 
@@ -122,7 +123,9 @@ def run_model_pipeline(
     options = {**CONFIG, **(dict(config) if config is not None else {})}
     _validate_config(options)
 
-    gold_df = _acquire_gold_data(config=options, spark=spark)
+    if gold_df is None:
+        gold_df = _acquire_gold_data(config=options, spark=spark)
+
     dataset = prepare_model_dataset(
         gold_df,
         sequence_length=options["sequence_length"],

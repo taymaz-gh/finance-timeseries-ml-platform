@@ -424,3 +424,110 @@ def test_training_cli_spark_dry_run_remains_available() -> None:
 
     assert result.exit_code == 0
     assert "Dry run complete." in result.output
+
+
+def test_synthetic_training_cli_dispatch(monkeypatch, tmp_path) -> None:
+    """Dispatch local synthetic training without starting a real model."""
+    from unittest.mock import Mock
+
+    from finance_ml.pipelines import training_runner
+
+    run_training = Mock(return_value={"model_uri": None})
+    monkeypatch.setattr(training_runner, "run_training", run_training)
+
+    config = tmp_path / "synthetic.yaml"
+    config.write_text(
+        "log_to_mlflow: false\n" "register_in_uc: false\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "train",
+            "--data-source",
+            "synthetic",
+            "--config",
+            str(config),
+            "--synthetic-accounts",
+            "12",
+            "--synthetic-days",
+            "60",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Training completed successfully." in result.output
+    run_training.assert_called_once()
+
+    assert run_training.call_args.kwargs == {
+        "data_source": "synthetic",
+        "synthetic_accounts": 12,
+        "synthetic_days": 60,
+        "synthetic_seed": 42,
+    }
+
+
+def test_synthetic_training_rejects_remote_logging(monkeypatch) -> None:
+    """Block synthetic execution before any training or MLflow call."""
+    from unittest.mock import Mock
+
+    from finance_ml.pipelines import training_runner
+
+    run_training = Mock()
+    monkeypatch.setattr(training_runner, "run_training", run_training)
+
+    result = runner.invoke(
+        app,
+        ["train", "--data-source", "synthetic"],
+    )
+
+    assert result.exit_code == 2
+    assert "log_to_mlflow=false" in result.output
+    run_training.assert_not_called()
+
+
+def test_synthetic_training_dry_run_displays_data_source(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Displaying synthetic parameters without starting training."""
+    from unittest.mock import Mock
+
+    from finance_ml.pipelines import training_runner
+
+    mocked_training = Mock()
+    monkeypatch.setattr(
+        training_runner,
+        "run_training",
+        mocked_training,
+    )
+
+    path = tmp_path / "synthetic.yaml"
+    path.write_text(
+        "log_to_mlflow: false\n" "register_in_uc: false\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "train",
+            "--data-source",
+            "synthetic",
+            "--config",
+            str(path),
+            "--synthetic-accounts",
+            "8",
+            "--synthetic-days",
+            "60",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Data source: synthetic" in result.output
+    assert "Accounts: 8" in result.output
+    assert "Historical days: 60" in result.output
+    assert "Dry run complete." in result.output
+    mocked_training.assert_not_called()
