@@ -176,3 +176,64 @@ def train(
 
     typer.echo("Training completed successfully.")
     typer.echo(f"MLflow model URI: {result.get('model_uri')}")
+
+
+@app.command()
+def simulate(
+    existing_accounts: int = typer.Option(
+        3,
+        "--existing-accounts",
+        min=1,
+        help="Number of existing synthetic accounts.",
+    ),
+    historical_days: int = typer.Option(
+        10,
+        "--historical-days",
+        min=1,
+        help="Number of historical observations per account.",
+    ),
+    future_days: int = typer.Option(
+        4,
+        "--future-days",
+        min=1,
+        help="Number of future observations per account.",
+    ),
+    new_accounts: int = typer.Option(
+        2,
+        "--new-accounts",
+        min=0,
+        help="Number of previously unseen synthetic accounts.",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        min=0,
+        help="Random seed for reproducible generation.",
+    ),
+) -> None:
+    """Preview reproducible synthetic financial data in memory."""
+    from finance_ml.data.synthetic_sources import (
+        generate_in_memory_synthetic_data,
+    )
+
+    try:
+        data = generate_in_memory_synthetic_data(
+            n_existing_accounts=existing_accounts,
+            historical_days=historical_days,
+            future_days=future_days,
+            n_new_accounts=new_accounts,
+            random_seed=seed,
+        )
+    except (ValueError, TypeError) as exc:
+        typer.echo(
+            f"Simulation configuration error: {exc}",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
+
+    typer.echo("In-memory synthetic data:")
+    for name, frame in data.items():
+        typer.echo(f"  {name}: {len(frame)} rows")
+
+    typer.echo("Future observations exclude ground-truth labels.")
+    typer.echo("Simulation complete. No data was persisted.")

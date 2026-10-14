@@ -80,7 +80,7 @@ def test_rejects_invalid_config_before_creating_spark(monkeypatch) -> None:
     monkeypatch.setattr(
         training_runner,
         "_create_local_spark_session",
-        lambda: (spark, True),
+        create_spark,
     )
 
     config = {**TRAINING_CONFIG, "epochs": -5}
