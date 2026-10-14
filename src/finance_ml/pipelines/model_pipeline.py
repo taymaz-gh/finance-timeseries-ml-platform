@@ -1,37 +1,34 @@
 """Running reproducible financial time-series LSTM training workflows.
 
-Edit CONFIG below for interactive use, or import run_model_pipeline(config=...)
-from a notebook, scheduled job, or another Python module. Running this module
-never starts training merely by importing it.
+Supporting notebook/Databricks table queries and caller-supplied Gold data.
+Keeping each run's checkpoint, preprocessing metadata, and learning curves
+in a separate directory so inference cannot mix artifacts across runs.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 import numpy as np
 
+from finance_ml.config.training_config import (
+    TRAINING_CONFIG as CONFIG,
+    validate_training_config as _validate_config,
+)
 from finance_ml.data.query import (
     query_with_spark,
     query_with_sql_connector,
     query_with_sqlalchemy,
 )
 from finance_ml.models.experiment import run_lstm_experiment
+from finance_ml.models.local_bundle import publish_local_bundle
 from finance_ml.models.registry import register_logged_model
 from finance_ml.models.tracking import log_sequence_experiment
 from finance_ml.pipelines.model_dataset_pipeline import prepare_model_dataset
-
-from finance_ml.config.training_config import (
-    TRAINING_CONFIG as CONFIG,
-    validate_training_config as _validate_config,
-)
-
-
-# ============================================================
-# USER CONFIGURATION (edit here; no secrets should be stored)
-# ============================================================
 
 
 def _acquire_gold_data(*, config: Mapping[str, Any], spark: Any) -> Any:
@@ -44,8 +41,7 @@ def _acquire_gold_data(*, config: Mapping[str, Any], spark: Any) -> Any:
             raise ValueError("A SparkSession is required for query_method='spark'")
         return query_with_spark(spark, query)
 
-    # Both remote SQL methods return pandas; the existing training
-    # preprocessing pipeline requires Spark, so normalize here.
+    # Connector and SQLAlchemy supply pandas; preprocessing still needs Spark.
     pandas_df = (
         query_with_sql_connector(query)
         if method == "connector"
@@ -78,11 +74,28 @@ def _json_safe(value: Any) -> Any:
     raise TypeError(f"Cannot serialize preprocessing value: {type(value).__name__}")
 
 
-def _save_preprocessing_metadata(dataset: Mapping[str, Any], config: Mapping[str, Any], artifact_dir: Path) -> Path:
-    """Persist training-fitted transformations required for future inference."""
+def _create_run_artifact_dir(base_dir: str | Path) -> Path:
+    """Create a new, non-reused directory for every training run."""
+    root = Path(base_dir)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    run_dir = root / f"run_{run_id}_{uuid4().hex[:10]}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def _save_preprocessing_metadata(
+    dataset: Mapping[str, Any],
+    config: Mapping[str, Any],
+    artifact_dir: Path,
+    *,
+    training_input: str = "databricks_table",
+) -> Path:
+    """Persist training-fitted transformations for a future inference run."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
         "source_table": config["source_table"],
+        # Distinguishing configured table name from actual Gold data source.
+        "training_input": training_input,
         "sequence_length": config["sequence_length"],
         "stride": config["stride"],
         "boundary_width": config["boundary_width"],
@@ -110,19 +123,17 @@ def run_model_pipeline(
     spark: Any = None,
     gold_df: Any = None,
 ) -> dict[str, Any]:
-    """Query, preprocess, train, evaluate, optionally log/register an LSTM.
+    """Query or accept Gold, preprocess, train, and optionally log/register.
 
-    `spark` can be the active Databricks SparkSession. For all query modes,
-    Spark is needed by the existing preprocessing implementation. Final
-    mode evaluates the held-out test partition and may register in UC;
-    development mode uses validation metrics only.
-
-    Returns a dictionary with experiment result, MLflow model URI, optional
-    registered version, and preprocessing metadata artifact location.
+    All query modes use Spark-based preprocessing. Supplying ``gold_df``
+    bypasses data querying, as in synthetic training. Each call creates an
+    isolated artifact directory. A local model bundle is published only
+    when a Keras checkpoint was requested and training completed.
     """
     options = {**CONFIG, **(dict(config) if config is not None else {})}
     _validate_config(options)
 
+    supplied_gold = gold_df is not None
     if gold_df is None:
         gold_df = _acquire_gold_data(config=options, spark=spark)
 
@@ -139,8 +150,11 @@ def run_model_pipeline(
     if not n_features:
         raise ValueError("The prepared dataset contains no model features")
 
-    artifact_dir = Path(options["artifact_dir"])
-    metadata_path = _save_preprocessing_metadata(dataset, options, artifact_dir)
+    artifact_dir = _create_run_artifact_dir(options["artifact_dir"])
+    metadata_path = _save_preprocessing_metadata(
+        dataset, options, artifact_dir,
+        training_input="supplied_gold_dataframe" if supplied_gold else "databricks_table",
+    )
     is_final = options["run_mode"] == "final"
     parameters = {
         key: str(value) if isinstance(value, tuple) else value
@@ -151,8 +165,11 @@ def run_model_pipeline(
     parameters["n_features"] = n_features
     parameters["preprocessing_metadata_file"] = metadata_path.name
 
+    bundle_manifest_path: Path | None = None
+
     def _train():
-        return run_lstm_experiment(
+        nonlocal bundle_manifest_path
+        result = run_lstm_experiment(
             x_train=dataset["X_train"],
             y_train=dataset["y_train"],
             metadata_train=dataset["train_metadata"],
@@ -182,6 +199,12 @@ def run_model_pipeline(
             seed=options["seed"],
             artifact_dir=artifact_dir,
         )
+        if options["save_keras_checkpoint"]:
+            # Publishing the manifest last: incomplete training is not loadable.
+            bundle_manifest_path = publish_local_bundle(
+                artifact_dir, model=result.model
+            )
+        return result
 
     model_uri = None
     registered_version = None
@@ -198,9 +221,11 @@ def run_model_pipeline(
             mlflow.set_tag("selection_stage", options["run_mode"])
             if is_final:
                 mlflow.set_tag("final_model", "true")
-            # The training utility reports its own artifacts to MLflow;
-            # metadata is logged separately for later inference.
             mlflow.log_artifact(str(metadata_path), artifact_path="training_artifacts")
+            if bundle_manifest_path is not None:
+                mlflow.log_artifact(
+                    str(bundle_manifest_path), artifact_path="training_artifacts"
+                )
             model_uri = log_sequence_experiment(
                 result=result,
                 parameters=parameters,
@@ -220,6 +245,7 @@ def run_model_pipeline(
         )
 
     print("Query method:", options["query_method"])
+    print("Training input:", "provided Gold" if supplied_gold else "Databricks table")
     print("Mode:", options["run_mode"])
     print("Model features:", n_features)
     print("Validation macro-F1:", result.validation_evaluation["macro_f1"])
@@ -227,6 +253,8 @@ def run_model_pipeline(
         print("Test macro-F1:", result.test_evaluation["macro_f1"])
     print("MLflow model URI:", model_uri)
     print("UC model version:", getattr(registered_version, "version", None))
+    if bundle_manifest_path is not None:
+        print("Local model bundle:", artifact_dir)
 
     return {
         "experiment": result,
@@ -234,10 +262,10 @@ def run_model_pipeline(
         "registered_version": registered_version,
         "metadata_path": metadata_path,
         "feature_columns": feature_columns,
+        "bundle_dir": artifact_dir if bundle_manifest_path is not None else None,
+        "bundle_manifest_path": bundle_manifest_path,
     }
 
 
 if __name__ == "__main__":
-    # Running on Databricks: use the active `spark` session if available.
-    # Local runs need a configured SparkSession (and Databricks credentials).
     run_model_pipeline(spark=globals().get("spark"))

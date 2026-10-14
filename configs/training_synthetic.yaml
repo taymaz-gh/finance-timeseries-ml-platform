@@ -1,14 +1,16 @@
-
-# Local demonstration only — never register or remotely log a model.
+# Local demonstration: no Databricks queries, MLflow runs, or UC registration.
 run_mode: development
 log_to_mlflow: false
 register_in_uc: false
 
-# Keeping the example small enough for local experimentation.
+# Small bounded experiment on local Spark and CPU TensorFlow.
 epochs: 2
 batch_size: 16
 lstm_units: [8]
 patience: 1
 verbose: 0
-save_keras_checkpoint: false
+
+# Saving the best Keras checkpoint and the fitted preprocessing contract
+# together in a new run-specific directory for future local inference.
+save_keras_checkpoint: true
 artifact_dir: artifacts/synthetic_training

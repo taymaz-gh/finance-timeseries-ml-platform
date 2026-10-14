@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import typer
-
+import json
 from pathlib import Path
+
+import typer
 
 from finance_ml import __version__
 
@@ -108,58 +109,37 @@ def train(
     ),
 ) -> None:
     """Validate training configuration and optionally execute training."""
-    import json
-
     from finance_ml.config.config_loader import load_yaml_config
     from finance_ml.config.training_config import (
         TRAINING_CONFIG,
         validate_training_config,
     )
 
-    # Copying the default training configuration.
+    # Copying defaults, applying YAML overrides, then explicit CLI arguments.
     options = dict(TRAINING_CONFIG)
-
-    # Loading experiment-specific YAML overrides.
     if config is not None:
         try:
-            options.update(
-                load_yaml_config(
-                    config,
-                    allowed_keys=TRAINING_CONFIG,
-                )
-            )
+            options.update(load_yaml_config(config, allowed_keys=TRAINING_CONFIG))
         except ValueError as exc:
             typer.echo(f"Configuration error: {exc}", err=True)
             raise typer.Exit(code=2) from exc
 
-    # Applying explicit CLI overrides with highest precedence.
     cli_overrides = {
         "epochs": epochs,
         "batch_size": batch_size,
         "run_mode": run_mode,
         "query_method": query_method,
     }
+    options.update({key: value for key, value in cli_overrides.items() if value is not None})
 
-    options.update(
-        {key: value for key, value in cli_overrides.items() if value is not None}
-    )
-
-    # Validating the resolved training configuration.
     try:
         validate_training_config(options)
-
     except (ValueError, TypeError, KeyError) as exc:
-        typer.echo(
-            f"Invalid training configuration: {exc}",
-            err=True,
-        )
+        typer.echo(f"Invalid training configuration: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     if data_source not in {"databricks", "synthetic"}:
-        typer.echo(
-            "Invalid data source: choose databricks or synthetic.",
-            err=True,
-        )
+        typer.echo("Invalid data source: choose databricks or synthetic.", err=True)
         raise typer.Exit(code=2)
 
     if data_source == "synthetic":
@@ -171,11 +151,11 @@ def train(
             )
             raise typer.Exit(code=2)
 
-    # Validating execution-specific safeguards without modifying ML defaults.
+    # Keeping execution safeguards separate from configuration inspection.
     if not dry_run:
         if options["register_in_uc"] and not allow_uc_registration:
             typer.echo(
-                "Unity Catalog registration requires " "--allow-uc-registration.",
+                "Unity Catalog registration requires --allow-uc-registration.",
                 err=True,
             )
             raise typer.Exit(code=2)
@@ -191,9 +171,7 @@ def train(
             )
             raise typer.Exit(code=2)
 
-    # Displaying the selected data source and its generation parameters.
     typer.echo(f"Data source: {data_source}")
-
     if data_source == "synthetic":
         typer.echo("Synthetic data configuration:")
         typer.echo(f"  Accounts: {synthetic_accounts}")
@@ -204,20 +182,15 @@ def train(
             "followed by local Spark Silver/Gold processing"
         )
 
-    # Displaying the resolved model configuration.
     typer.echo("Training configuration:")
-
     typer.echo(json.dumps(options, indent=2))
-
     if dry_run:
         typer.echo("Dry run complete. No training was started.")
         return
 
-    # Loading training infrastructure only for actual execution.
     from finance_ml.pipelines.training_runner import run_training
 
     typer.echo("Starting model training...")
-
     try:
         if data_source == "synthetic":
             result = run_training(
@@ -230,14 +203,13 @@ def train(
         else:
             result = run_training(options)
     except Exception as exc:
-        typer.echo(
-            f"Training failed: {exc}",
-            err=True,
-        )
+        typer.echo(f"Training failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     typer.echo("Training completed successfully.")
     typer.echo(f"MLflow model URI: {result.get('model_uri')}")
+    if result.get("bundle_dir") is not None:
+        typer.echo(f"Local model bundle: {result['bundle_dir']}")
 
 
 @app.command()
@@ -274,9 +246,7 @@ def simulate(
     ),
 ) -> None:
     """Preview reproducible synthetic financial data in memory."""
-    from finance_ml.data.synthetic_sources import (
-        generate_in_memory_synthetic_data,
-    )
+    from finance_ml.data.synthetic_sources import generate_in_memory_synthetic_data
 
     try:
         data = generate_in_memory_synthetic_data(
@@ -287,15 +257,11 @@ def simulate(
             random_seed=seed,
         )
     except (ValueError, TypeError) as exc:
-        typer.echo(
-            f"Simulation configuration error: {exc}",
-            err=True,
-        )
+        typer.echo(f"Simulation configuration error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     typer.echo("In-memory synthetic data:")
     for name, frame in data.items():
         typer.echo(f"  {name}: {len(frame)} rows")
-
     typer.echo("Future observations exclude ground-truth labels.")
     typer.echo("Simulation complete. No data was persisted.")
