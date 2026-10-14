@@ -106,6 +106,7 @@ def _save_preprocessing_metadata(
         "category_levels": dataset["category_levels"],
         "scaler_parameters": dataset["scaler_parameters"],
         "scaling_method": dataset["scaling_method"],
+        "feature_schema_profile": config["feature_schema_profile"],
         "train_end": dataset["train_end"],
         "validation_end": dataset["validation_end"],
     }
@@ -144,6 +145,7 @@ def run_model_pipeline(
         scaling_method=options["scaling_method"],
         train_fraction=options["train_fraction"],
         validation_fraction=options["validation_fraction"],
+        feature_schema_profile=options["feature_schema_profile"],
     )
     feature_columns = dataset["final_feature_columns"]
     n_features = len(feature_columns)

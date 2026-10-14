@@ -67,12 +67,22 @@ Local synthetic training:
 finance-ml train `
     --data-source synthetic `
     --config configs/training_synthetic.yaml `
-    --synthetic-accounts 8 `
+    --synthetic-accounts 20 `
     --synthetic-days 60 `
+    --synthetic-seed 42 `
     --dry-run
 ```
 
 Remove `--dry-run` to execute the training run.
+
+
+The synthetic training workflow applies controlled Bronze data-quality
+injection before Silver cleaning and Gold feature engineering.
+With the `reference_v1` schema profile, the LSTM receives 41
+ordered features: 22 numerical features, 16 missingness
+indicators, and 3 categorical one-hot features. Imputation
+and scaling are fitted using the training partition only.
+
 
 Databricks-backed training configuration check:
 
@@ -101,12 +111,17 @@ metadata defines the exact input feature schema.
 **Local model inference:**
 
 ```powershell
-$bundle = "artifacts\synthetic_training\<local-model-run-directory>"
+$bundle = "artifacts\synthetic_training\<your-run-directory>"
+```
 
+Replace <your-run-directory> with the run directory printed after training. Local model artifacts are not included in the Git repository.
+
+```powershell
 finance-ml infer `
     --data-source synthetic `
+    --model-source local `
     --bundle "$bundle" `
-    --account-id 9 `
+    --account-id 21 `
     --start-date 2026-02-10 `
     --end-date 2026-02-12 `
     --smoke
@@ -115,6 +130,28 @@ finance-ml infer `
 Local synthetic replay requires a checkpoint-bound provenance
 profile. For older bundles, this can be created using
 `finance-ml profile-init` with the verified training parameters.
+
+**Verified local model:** As a small-scale demonstration, A seven-timestep LSTM with 41
+features, trained using 20 synthetic development accounts and five epochs.
+The selected local bundle was evaluated on 10 previously unseen
+accounts (21–30), covering January 7–March 1, 2026.
+
+| Metric | Account Holdout result |
+|---|---:|
+| Predictions | 540/540 |
+| Accuracy | 0.7815 |
+| Macro-F1 | 0.6956 |
+
+These are synthetic-data results, not estimates of real-world
+financial-risk performance. Local inference replays clean synthetic
+observations and applies the model's saved preprocessing without
+refitting. The model's training data included controlled Bronze
+data-quality corruption.
+
+The local model is separate from the registered Unity Catalog
+model v1. Both have 41 input features, but different trained
+weights, fitted preprocessing parameters, and development populations.
+
 
 **Registered Unity Catalog model inference:**
 

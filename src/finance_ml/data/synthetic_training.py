@@ -1,14 +1,29 @@
-"""Preparing synthetic Gold training data without Databricks access."""
+"""Preparing local synthetic Gold training data through Bronze, Silver, and Gold."""
 
 from __future__ import annotations
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from finance_ml.data.generate_synthetic import generate_financial_timeseries
+from finance_ml.data.inject_quality_issues import inject_data_quality_issues
 
 
 MAX_SYNTHETIC_TRAINING_ROWS = 20_000
+
+
+def _to_spark_value(value: object) -> object:
+    """Converting pandas/NumPy scalar values to Spark-compatible values."""
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if pd.isna(value):
+        return None
+
+    return value
 
 
 def prepare_synthetic_gold(
@@ -18,10 +33,11 @@ def prepare_synthetic_gold(
     n_days: int = 60,
     random_seed: int = 42,
 ):
-    """Build synthetic training data through the existing Silver/Gold layers."""
+    """Building local synthetic Gold through reproducible Bronze corruption."""
     from finance_ml.lakehouse.build_silver import build_silver_dataframe
     from finance_ml.lakehouse.build_gold import build_gold_features
 
+    # Validating bounded local simulation parameters.
     for key, value in {
         "n_accounts": n_accounts,
         "n_days": n_days,
@@ -38,25 +54,46 @@ def prepare_synthetic_gold(
             f"{MAX_SYNTHETIC_TRAINING_ROWS:,}-row limit"
         )
 
-    historical = generate_financial_timeseries(
+    # Generating reproducible clean observations.
+    clean = generate_financial_timeseries(
         n_accounts=n_accounts,
         n_days=n_days,
         random_seed=random_seed,
     )
 
-    # Converting pandas and NumPy scalar values to native Python types.
-    # Preserving simulation values while making records Spark-compatible.
-    records = historical.to_dict(orient="records")
+    # Reproducing the original Bronze corruption policy.
+    # Keeping its RNG separate from the financial simulator.
+    bronze_pd = inject_data_quality_issues(
+        clean,
+        random_seed=123,
+    )
 
-    for record in records:
-        for column, value in record.items():
-            if isinstance(value, np.generic):
-                record[column] = value.item()
+    # Preserving the original pandas column ordering.
+    columns = list(bronze_pd.columns)
 
-            elif isinstance(value, pd.Timestamp):
-                record[column] = value.to_pydatetime()
+    # Converting NaN/NaT to actual Spark nulls rather than NaN values.
+    records = [
+        tuple(_to_spark_value(record[column]) for column in columns)
+        for record in bronze_pd.to_dict(orient="records")
+    ]
 
-    bronze = spark.createDataFrame(records)
+    bronze = spark.createDataFrame(
+        records,
+        schema=columns,
+    )
 
-    silver = build_silver_dataframe(bronze, require_labels=True)
+    print(
+        "Synthetic Bronze preparation:",
+        f"{len(clean)} clean rows,",
+        f"{len(bronze_pd)} Bronze rows,",
+        f"{len(bronze_pd) - len(clean)} injected duplicates",
+    )
+
+    # Cleaning invalid values and duplicate account/date keys.
+    silver = build_silver_dataframe(
+        bronze,
+        require_labels=True,
+    )
+
+    # Engineering lag, change, and rolling-window predictors.
     return build_gold_features(silver)

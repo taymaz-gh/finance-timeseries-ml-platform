@@ -9,7 +9,6 @@ from finance_ml.preprocessing.imputation import (
 )
 
 
-
 def test_fit_numeric_medians_uses_training_data_only(
     spark,
 ) -> None:
@@ -84,3 +83,30 @@ def test_apply_numeric_imputation_preserves_schema_across_splits(
 
     assert "value" in transformed_df.columns
     assert "value_missing" in transformed_df.columns
+
+
+def test_explicit_indicators_are_stable_without_observed_missingness(
+    spark,
+) -> None:
+    """Keeping declared indicators when training has no missing values."""
+    train_df = spark.createDataFrame(
+        [
+            ("A", 10.0),
+            ("B", 20.0),
+            ("C", 30.0),
+        ],
+        ["account_id", "value"],
+    )
+
+    medians = fit_numeric_medians(
+        train_df,
+        ["value"],
+        indicator_columns=["value"],
+    )
+
+    assert medians == {"value": 20.0}
+
+    transformed = apply_numeric_imputation(train_df, medians)
+
+    assert "value_missing" in transformed.columns
+    assert all(row["value_missing"] == 0 for row in transformed.collect())

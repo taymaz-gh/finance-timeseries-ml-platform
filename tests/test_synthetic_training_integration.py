@@ -7,6 +7,11 @@ import numpy as np
 from finance_ml.data.synthetic_training import prepare_synthetic_gold
 from finance_ml.pipelines.model_dataset_pipeline import prepare_model_dataset
 
+from finance_ml.preprocessing.reference_schema import (
+    REFERENCE_V1_FINAL_FEATURE_COLUMNS,
+    REFERENCE_V1_MISSING_COLUMNS,
+)
+
 
 def test_synthetic_gold_and_model_dataset(spark) -> None:
     """Preparing real Spark Gold features and model-ready LSTM sequences."""
@@ -42,10 +47,30 @@ def test_synthetic_gold_and_model_dataset(spark) -> None:
         scaling_method="mad",
         train_fraction=0.70,
         validation_fraction=0.15,
+        feature_schema_profile="reference_v1",
     )
 
-    feature_count = len(dataset["final_feature_columns"])
-    assert feature_count > 0
+    # Verifying the exact reference schema rather than its size alone.
+    feature_columns = dataset["final_feature_columns"]
+    feature_count = len(feature_columns)
+
+    assert feature_count == 41
+    assert tuple(feature_columns) == REFERENCE_V1_FINAL_FEATURE_COLUMNS
+
+    # Verifying that all sixteen indicator features are created,
+    # including those without missing observations in this sample.
+    assert tuple(dataset["medians"]) == REFERENCE_V1_MISSING_COLUMNS
+
+    # Verifying the fixed categorical domain and feature ordering.
+    assert dataset["category_levels"] == {
+        "account_type": ["business", "checking", "credit"],
+    }
+
+    assert feature_columns[-3:] == [
+        "account_type_business",
+        "account_type_checking",
+        "account_type_credit",
+    ]
 
     # Verifying all three chronological partitions.
     for x_key, y_key in (

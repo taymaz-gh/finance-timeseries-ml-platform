@@ -20,6 +20,7 @@ TRAINING_CONFIG: dict[str, Any] = {
     "sequence_length": 7,
     "stride": 1,
     "scaling_method": "mad",
+    "feature_schema_profile": "observed",
     "train_fraction": 0.70,
     "validation_fraction": 0.15,
     "n_classes": 4,
@@ -57,6 +58,13 @@ def validate_training_config(config: Mapping[str, Any]) -> None:
     # Validating the execution mode.
     if config["run_mode"] not in {"development", "final"}:
         raise ValueError("run_mode must be development or final")
+
+    # Validating the model input-schema policy.
+    if config["feature_schema_profile"] not in {
+        "observed",
+        "reference_v1",
+    }:
+        raise ValueError("feature_schema_profile must be observed or reference_v1")
 
     # Validating the fully qualified Unity Catalog source table.
     source_table = config["source_table"]

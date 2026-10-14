@@ -3,8 +3,12 @@ run_mode: development
 log_to_mlflow: false
 register_in_uc: false
 
+# Matching the verified 41-feature reference model input contract.
+# Feature values and preprocessing statistics remain training-specific.
+feature_schema_profile: reference_v1
+
 # Small bounded experiment on local Spark and CPU TensorFlow.
-epochs: 2
+epochs: 5
 batch_size: 16
 lstm_units: [8]
 patience: 1

@@ -14,77 +14,241 @@ Use `finance-ml --help`, `finance-ml train --help`, `finance-ml infer --help`, a
 
 **Smoke execution is not a dry run:** it initializes real Spark/Keras. It does **not** silently substitute different accounts/dates; requests for more than two accounts or seven days with `--smoke` fail explicitly. Training has a configurable small synthetic run rather than a separate `--smoke` option.
 
+
 ## 2. PowerShell: selecting a saved model
 
-From the repository root, while `.venv` is activated:
+From the repository root, with `.venv` activated, explicitly
+select the model bundle intended for inference:
 
 ```powershell
-# Selecting the most recent completed local model bundle.
-$bundle = (
-    Get-ChildItem "artifacts\synthetic_training" -Directory |
-    Where-Object {
-        Test-Path (Join-Path $_.FullName "bundle_manifest.json")
-    } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-).FullName
+$bundle = "artifacts\synthetic_training\run_20261014T190400421801Z_ec147fbc56"
 
 Test-Path "$bundle\bundle_manifest.json"
 finance-ml infer --help
 ```
 
-`$bundle` is a PowerShell variable holding a **directory path**; `"$bundle"` substitutes that path in the command. Use the actual path printed after `finance-ml train`, not a placeholder. PowerShell variables live in the current shell session and must be set again in a new terminal. The folder must contain `best_model.keras`, `preprocessing_metadata.json`, and `bundle_manifest.json`.
+The selected bundle contains:
 
-### Legacy local-bundle provenance (one-time setup)
+- `best_model.keras`: the saved Keras LSTM.
+- `preprocessing_metadata.json`: fitted preprocessing parameters
+  and the exact model input feature order.
+- `bundle_manifest.json`: artifact checksums and model signature.
+- `synthetic_provenance.json`: separately declared simulator
+  parameters for reproducible synthetic account replay.
 
-An example **local** model trained on **8 synthetic development accounts**, 60 days from `2026-01-01`, simulator seed `42`. The checkpoint stores the fitted feature transforms but **does not persist a verified population/seed record**. Declare these values explicitly before first account/date inference:
+The model was trained using 20 synthetic accounts, 60 days
+starting January 1, 2026, and simulator seed 42. Its input
+consists of seven timesteps and 41 features.
+
+The saved bundle and its manifest have been verified, including
+the Keras input/output signatures.
+
+### Synthetic provenance
+
+Local account/date inference requires a provenance profile
+associated with the selected model checkpoint.
+
+For a newly trained bundle that does not yet have one, initialize
+the profile using the actual training parameters:
 
 ```powershell
-finance-ml profile-init --bundle "$bundle" --development-accounts 8 --historical-days 60 --seed 42 --start-date 2026-01-01 --observed-through 2026-04-30 --max-new-accounts 1000
+finance-ml profile-init `
+    --bundle "$bundle" `
+    --development-accounts 20 `
+    --historical-days 60 `
+    --seed 42 `
+    --start-date 2026-01-01 `
+    --observed-through 2026-03-01 `
+    --max-new-accounts 1000
 ```
 
-This writes `synthetic_provenance.json` **next to** the checkpoint. It is tied to the checkpoint's SHA-256 digest, does **not** change its manifest/checksums, and refuses to overwrite an existing profile. **Provenance is user-declared, not verified against the original training records.** Record different parameters only when supported by the actual training run; do not label an unrelated replay as the original training dataset. `--observed-through` is the defined synthetic experiment horizon, **not evidence that the local data were persisted to Databricks**.
+**This is a one-time command.** The selected example bundle
+already has its provenance profile, so it should not be
+initialized again.
 
-The eight-account local model and the previously registered **2,000-account Databricks model v1 are different models with different development populations**. For this local bundle, account `ACC_00521` is *new*. In the registered-model notebook's separate population, `ACC_00521` is *known*. Do not switch those interpretations when reporting results.
+The profile is associated with the checkpoint's SHA-256 digest.
+It does not change the Keras model, preprocessing metadata,
+or bundle manifest.
+
+The simulator parameters are user-declared rather than
+independently recovered from the original training data.
+The observation horizon describes a synthetic experiment,
+not observations persisted in Databricks.
+
+### Distinguishing local and registered models
+
+The local LSTM and registered Unity Catalog LSTM v1 are
+different trained models:
+
+| Property | Local model | UC model v1 |
+|---|---|---|
+| Development accounts | 20 | 2,000 |
+| Development dates | Jan 1–Mar 1, 2026 | Jan 1–Mar 1, 2026 |
+| Input timesteps | 7 | 7 |
+| Input features | 41 | 41 |
+| Model storage | Local Keras bundle | Unity Catalog |
+| Model selection | `--bundle` | `--model-name` and `--model-version` |
+
+Both models use the verified 41-feature input structure,
+but their learned weights and fitted preprocessing parameters
+are model-specific.
+
+For example, `ACC_00521` is a new account relative to the
+20-account local model, but a known account relative to
+the 2,000-account registered model.
 
 ## 3. Account/date inference syntax
 
+The CLI uses explicit account identifiers and inclusive
+calendar dates.
+
+### Local model inference
+
 ```powershell
-# One account; explicit start/end and selected model.
-finance-ml infer --bundle "$bundle" --account-id ACC_00001 --start-date 2026-03-10 --end-date 2026-03-12 --dry-run
+# Validating a known-account request without loading the model.
+finance-ml infer `
+    --data-source synthetic `
+    --model-source local `
+    --bundle "$bundle" `
+    --account-id 1 `
+    --start-date 2026-02-10 `
+    --end-date 2026-02-12 `
+    --dry-run
 
-# Real smoke execution of exactly the specified two days and one account.
-finance-ml infer --bundle "$bundle" --account-id 9 --start-date 2026-02-10 --end-date 2026-02-11 --smoke
+# Executing inference on an unseen account.
+finance-ml infer `
+    --data-source synthetic `
+    --model-source local `
+    --bundle "$bundle" `
+    --account-id 21 `
+    --start-date 2026-02-10 `
+    --end-date 2026-02-12 `
+    --smoke
 
-# Full local inference on any explicitly selected accounts (not forced cohorts).
-finance-ml infer --bundle "$bundle" --account-id 1 --account-id 2 --start-date 2026-03-10 --end-date 2026-03-20
+# Evaluating two unseen accounts over the declared observation period.
+finance-ml infer `
+    --data-source synthetic `
+    --model-source local `
+    --bundle "$bundle" `
+    --account-id 21 `
+    --account-id 22 `
+    --start-date 2026-01-07 `
+    --end-date 2026-03-01
 
-# No observations after Apr 30 exist inside this replay profile by default:
-finance-ml infer --bundle "$bundle" --account-id 521 --start-date 2026-05-01 --end-date 2026-05-03 --dry-run
-
-# An opt-in synthetic scenario, NOT a feature-free future risk forecast:
-finance-ml infer --bundle "$bundle" --account-id 521 --start-date 2026-05-01 --end-date 2026-05-03 --simulate-future
+# Explicitly simulating future financial observations.
+finance-ml infer `
+    --data-source synthetic `
+    --model-source local `
+    --bundle "$bundle" `
+    --account-id 21 `
+    --start-date 2026-03-02 `
+    --end-date 2026-03-04 `
+    --simulate-future
 ```
 
-Input `--account-id 521` normalizes to `ACC_00521`; repeat the flag to select multiple accounts. Dates are **inclusive** and must use `YYYY-MM-DD`. Date spans may cross evaluation boundaries; each output row receives its own internally derived cohort.
+`--account-id 21` is normalized to `ACC_00021`. Repeat the
+option to request multiple accounts.
 
-| Dates / model-relative population | Existing in model development (1–8 for this bundle) | New to model development (9–1008 for this profile) |
+For the selected local provenance profile, the supported
+cohorts are:
+
+| Dates | Known accounts (1–20) | New accounts (21–1020) |
 |---|---|---|
-| `2026-01-01`–`2026-03-01` | **Development period**; warning, excluded from independent holdout metrics | **Account Holdout** |
-| `2026-03-02`–`2026-04-30` | **Date Holdout** | **Joint Holdout** |
-| After `2026-04-30` | Opt-in **simulated extension** only | Opt-in **simulated extension** only |
+| Jan 1–Mar 1, 2026 | Development period | Account Holdout |
+| Mar 2–Apr 30, 2026 | Simulated extension (opt-in) | Simulated extension (opt-in) |
 
-Dates before January 1 are rejected. Dates after April 30 without `--simulate-future` are rejected. The opt-in extension is bounded to 60 days past the profile horizon. *Neither normal inference nor synthetic continuation writes Databricks tables.* The configured 1,000 new accounts in notebook 10 is a **cohort size**; the profile enforces that cap for reproducible local replay, not a fundamental simulator limitation.
+The development period contains the original training,
+validation, and test partitions. These partitions are
+chronologically distinct but share the same 20 accounts.
 
-### Causal endpoint policy
+The Account Holdout cohort contains accounts excluded from
+the model's original development population.
 
-The inference CLI reads sequence length and ordered features from the **selected model**. The demonstrated local bundle has 7 timesteps and 31 features; the separately registered UC LSTM v1 has 7 timesteps and 41 features. For a requested date `t`, serving builds a trailing window ending at `t`; predictions use the model output at the **final sequence position**. No future-dated feature is allowed. The first six days of a new account cannot be scored without sufficient history; they appear in coverage output as `insufficient_context`. The original model-development validation instead **trimmed two positions at each end and aggregated overlapping windows**. Those macro-F1 metrics are not directly comparable to causal endpoint scores.
+There are no independently observed local Date Holdout or
+Joint Holdout periods under this provenance profile. Those
+cohorts are supported separately by the registered Unity
+Catalog model and its persisted synthetic holdout datasets.
+
+Dates before January 1 are rejected. Dates after March 1
+require `--simulate-future` and are limited to 60 additional
+days, through April 30.
+
+`--simulate-future` generates future financial predictors
+before classification. It is not a forecasting procedure
+that predicts future risk from the last observed data alone.
+
+### Causal endpoint prediction
+
+The selected local model receives input sequences of shape:
+
+`(batch_size, 7, 41)`
+
+For a requested date `t`, inference constructs the trailing
+seven-observation window ending at `t` and returns the
+classification from its final timestep.
+
+Only observations at or before `t` are used.
+
+The first six observations of an account cannot be classified
+without sufficient historical context. They are reported
+as `insufficient_context`.
+
+Model-development validation uses a different evaluation
+policy: it trims boundary positions and aggregates predictions
+from overlapping windows. Its macro-F1 is therefore not
+directly equivalent to the CLI's causal-endpoint macro-F1.
+
+### Verified local Account Holdout evaluation
+
+The selected 41-feature model was evaluated on 10 unseen
+synthetic accounts (21–30), covering January 7–March 1, 2026.
+
+| Metric | Result |
+|---|---:|
+| Requested observations | 540 |
+| Successful predictions | 540 |
+| Accuracy | 0.7815 |
+| Macro-F1 | 0.6956 |
+
+Per-class F1 scores:
+
+| Risk state | F1 |
+|---|---:|
+| Normal | 0.9060 |
+| Elevated risk | 0.4417 |
+| Liquidity stress | 0.5584 |
+| Delinquency risk | 0.8764 |
+
+These are results on synthetic observations, not estimates
+of production financial-risk performance.
+
+Because observations within an account are temporally
+dependent, the 540 observations represent only 10
+independent account trajectories.
+
+The training data included controlled Bronze data-quality
+corruption, whereas local inference replayed clean synthetic
+observations. Both use the same Silver and Gold transformation
+implementations, and inference reuses the model's fitted
+preprocessing parameters without refitting.
 
 ### Source and provenance boundaries
 
-`--data-source synthetic --model-source local` reconstructs selected account histories **in memory** from the configured stateful simulator; it does not query Databricks. `--data-source databricks --model-source uc` reads **persisted Gold tables** and loads the **pinned UC model v1**, with separately documented cohort boundaries. A dry run checks local request constraints without connecting to Databricks or importing TensorFlow/MLflow. A local dry run cannot independently authenticate a user-declared simulator seed.
+`--data-source synthetic --model-source local` reconstructs
+synthetic account histories in memory and loads the selected
+local Keras bundle.
 
-`--simulate-future` generates **future financial predictors** from preserved simulator latent-state and RNG snapshots, then classifies them. It does **not** perform future risk forecasting from April 30 alone. New-account replay follows the simulator's original fixed shared random-number stream through the profile's observed horizon; any extension then resumes the selected account's independent snapshot. This avoids changing historical observations when the requested end date changes. The LSTM's hidden/cell states are not persisted between CLI calls.
+`--data-source databricks --model-source uc` reads persisted
+Databricks Gold features and loads the specified registered
+model version, subject to the supported UC model contract.
+
+Neither inference workflow retrains models or modifies
+Databricks tables.
+
+The local provenance profile is a user-declared description
+of the simulator and its history. It should not be treated
+as independently authenticated training-data provenance.
+
 
 ## 4. ASCII execution diagrams
 
@@ -277,7 +441,7 @@ Dry-run validation:
 finance-ml train `
     --data-source synthetic `
     --config configs/training_synthetic.yaml `
-    --synthetic-accounts 8 `
+    --synthetic-accounts 20 `
     --synthetic-days 60 `
     --synthetic-seed 42 `
     --dry-run
@@ -289,7 +453,7 @@ Execute training:
 finance-ml train `
     --data-source synthetic `
     --config configs/training_synthetic.yaml `
-    --synthetic-accounts 8 `
+    --synthetic-accounts 20 `
     --synthetic-days 60 `
     --synthetic-seed 42
 ```
@@ -302,11 +466,24 @@ and its preprocessing metadata.
 Synthetic CLI training explicitly disables MLflow logging and
 Unity Catalog registration.
 
-The current local synthetic workflow does not inject the
-deliberate Bronze data-quality corruption used in the original
-Databricks data-preparation workflow. Consequently, the fitted
-input feature schema may differ between training runs.
-This limitation is tracked separately from inference.
+
+Local synthetic training applies controlled data-quality injection
+to generated observations before processing them through the
+Bronze, Silver, and Gold stages. The injected issues include
+missing values, invalid numeric values, and duplicate records.
+
+The `reference_v1` feature-schema profile produces a fixed,
+ordered 41-feature input: 22 numerical features, 16 missingness
+indicators, and three account-type one-hot features. Imputation
+and scaling statistics are fitted on the training partition only.
+
+Local synthetic inference replays clean observations, applies
+the same Silver/Gold feature-engineering functions, and reuses
+the selected model's saved preprocessing metadata without
+refitting. Its evaluation therefore measures performance on
+clean synthetic observations rather than an exact replay of
+the corrupted training records.
+
 
 ### Databricks-backed training
 
@@ -425,7 +602,25 @@ finance-ml infer --data-source databricks --model-source uc --account-id 2001 --
 finance-ml infer --data-source databricks --model-source uc --query-method sqlalchemy --account-id 521 --start-date 2026-03-10 --end-date 2026-03-20
 ```
 
-The **only currently supported registered cohort** is `finance_ml.models.lstm_risk_classifier` version `1`. The CLI refuses other versions rather than applying v1's account/date definitions to an unrelated model. The registered-model loader checks the version's preprocessing run, metadata SHA-256, feature order and model input shape; UC v1 is expected to have **7 timesteps, 41 features, 4 classes**. In contrast, the local example checkpoint has **31 features** and an eight-account development population.
+
+The **only currently supported registered cohort** is
+`finance_ml.models.lstm_risk_classifier` version `1`.
+The CLI refuses other versions rather than applying v1's
+account/date definitions to an unrelated model.
+
+The registered-model loader verifies the preprocessing
+artifact, metadata SHA-256, feature ordering, and model
+input signature. UC v1 expects **7 timesteps, 41 features,
+and 4 classes**.
+
+The selected local synthetic LSTM also has **7 timesteps
+and 41 features**, but was trained separately using
+20 development accounts. Its fitted preprocessing parameters
+and Keras weights belong to its own saved bundle.
+
+Matching feature structures do not make the two models
+interchangeable.
+.
 
 The persisted UC model population and dates come from `notebooks/10_build_future.ipynb` and `docs/holdout_data_pipeline.md`:
 
@@ -490,4 +685,4 @@ The Date Holdout Gold may require **up to six historical preceding dates** from 
 
 **Evaluation:** `--evaluate` is opt-in: it queries `finance_ml.gold.account_labels_temporal_holdout` or `finance_ml.gold.account_labels_account_holdout` *after* model scoring, joins by `(account_id, date)`, and reports synthetic-diagnostic metrics only. Without it, the CLI does not read labels for evaluation. The original historical Gold table may contain labeled columns, but the real inference SELECT requests **only the ordered numeric and categorical input source columns** (plus keys).
 
-**Security and limitations:** SQL queries are allowlisted to three Gold tables and two truth tables, with strict account/date validation. No DDL, `INSERT`, or `OVERWRITE` operations are executed. Remote inference is bounded and driver-oriented; it is not a live serving endpoint. First test read access, MLflow loading and Spark execution with a single-account smoke run. Preserve the 31/41-feature discrepancy as a distinct training-schema improvement rather than changing registered-model preprocessing.
+**Security and limitations:** SQL queries are allowlisted to three Gold tables and two truth tables, with strict account/date validation. No DDL, `INSERT`, or `OVERWRITE` operations are executed. Remote inference is bounded and driver-oriented; it is not a live serving endpoint. First test read access, MLflow loading and Spark execution with a single-account smoke run. The local synthetic training pipeline now supports the verified reference_v1 input schema, containing 22 numerical features, 16 missingness indicators, and 3 categorical features (41 in total).
