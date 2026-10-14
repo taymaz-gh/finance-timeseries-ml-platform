@@ -6,33 +6,42 @@ from __future__ import annotations
 def fit_numeric_medians(
     train_df,
     numeric_columns: list[str],
+    *,
+    indicator_columns: list[str] | None = None,
 ) -> dict[str, float]:
-    """
-    Fit median imputation values using training data only.
+    """Fit training-only medians for observed or explicitly selected features.
 
-    Args:
-        train_df:
-            Training Spark DataFrame.
-        numeric_columns:
-            Numeric feature columns to inspect.
+    When indicator_columns is None, preserve the original policy:
+    fitting medians only for columns with missing training values.
 
-    Returns:
-        Dictionary mapping columns with missing values to their
-        training-derived median.
+    When indicator_columns is supplied, fit medians for those columns
+    regardless of whether missing values occur in this sample.
     """
+    import math
+
     from pyspark.sql import functions as F
 
-    missing_columns = []
+    if indicator_columns is None:
+        # Discovering missingness from training observations only.
+        selected_columns = [
+            column
+            for column in numeric_columns
+            if train_df.filter(F.col(column).isNull()).limit(1).count() > 0
+        ]
+    else:
+        # Maintaining a stable, explicitly declared indicator schema.
+        selected_columns = list(indicator_columns)
 
-    for column in numeric_columns:
-        has_missing = train_df.filter(F.col(column).isNull()).limit(1).count() > 0
+        if len(selected_columns) != len(set(selected_columns)):
+            raise ValueError("indicator_columns contains duplicate feature names")
 
-        if has_missing:
-            missing_columns.append(column)
+        unknown = sorted(set(selected_columns) - set(numeric_columns))
+        if unknown:
+            raise ValueError(f"Unknown numeric indicator columns: {unknown}")
 
-    medians = {}
+    medians: dict[str, float] = {}
 
-    for column in missing_columns:
+    for column in selected_columns:
         median_value = train_df.select(
             F.percentile_approx(
                 column,
@@ -40,11 +49,8 @@ def fit_numeric_medians(
             ).alias("median")
         ).first()["median"]
 
-        if median_value is None:
-            raise ValueError(
-                f"Cannot compute median for '{column}' because "
-                "the training column contains no non-null values."
-            )
+        if median_value is None or not math.isfinite(float(median_value)):
+            raise ValueError(f"Cannot compute a valid training median for '{column}'")
 
         medians[column] = float(median_value)
 

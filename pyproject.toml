@@ -20,13 +20,19 @@ dependencies = [
     "tensorflow>=2.21,<2.22",
     "matplotlib>=3.9,<4.0",
     "mlflow>=3.12,<4.0",
+    "typer>=0.12,<1.0",
+    "PyYAML>=6.0,<7.0",
 ]
 
 
 [project.optional-dependencies]
+local = [
+    "pyspark>=4.0,<5.0",
+]
+
 dev = [
     "pytest>=8",
-    "pyspark>=4.0",
+    "pyspark>=4.0,<5.0",
 ]
 
 
@@ -40,3 +46,7 @@ testpaths = ["tests"]
 
 [tool.databricks.environment]
 environment_version = "6"
+
+
+[project.scripts]
+finance-ml = "finance_ml.cli:app"

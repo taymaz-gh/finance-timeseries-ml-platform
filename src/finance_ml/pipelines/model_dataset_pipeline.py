@@ -27,6 +27,13 @@ from finance_ml.preprocessing.split import (
     temporal_split,
 )
 
+from finance_ml.preprocessing.reference_schema import (
+    REFERENCE_V1_NUMERIC_COLUMNS,
+    REFERENCE_V1_MISSING_COLUMNS,
+    REFERENCE_V1_CATEGORY_LEVELS,
+    REFERENCE_V1_FINAL_FEATURE_COLUMNS,
+)
+
 
 def prepare_model_dataset(
     gold_df,
@@ -41,6 +48,7 @@ def prepare_model_dataset(
     sequence_length: int = 7,
     stride: int = 1,
     scaling_method: str = "mad",
+    feature_schema_profile: str = "observed",
 ):
     """
     Prepare leakage-safe train, validation, and test sequence datasets.
@@ -131,13 +139,35 @@ def prepare_model_dataset(
     )
 
     numeric_features = model_columns["numeric_feature_columns"]
-
     categorical_features = model_columns["categorical_feature_columns"]
 
-    # Fitting numeric imputation statistics using training data only.
+    if feature_schema_profile not in {"observed", "reference_v1"}:
+        raise ValueError("feature_schema_profile must be observed or reference_v1")
+
+    # Verifying the reference model's original source-feature contract.
+    if feature_schema_profile == "reference_v1":
+        if tuple(numeric_features) != REFERENCE_V1_NUMERIC_COLUMNS:
+            raise ValueError(
+                "Gold numeric features do not match the reference_v1 "
+                "feature names and ordering"
+            )
+
+        if categorical_features != ["account_type"]:
+            raise ValueError(
+                "reference_v1 requires the account_type categorical feature"
+            )
+
+    # Fitting all imputation values on the training partition only.
+    selected_indicators = (
+        list(REFERENCE_V1_MISSING_COLUMNS)
+        if feature_schema_profile == "reference_v1"
+        else None
+    )
+
     medians = fit_numeric_medians(
         train_df,
         numeric_features,
+        indicator_columns=selected_indicators,
     )
 
     train_imputed_df = apply_numeric_imputation(
@@ -155,11 +185,47 @@ def prepare_model_dataset(
         medians,
     )
 
-    # Fitting categorical levels using training data only.
-    category_levels = fit_category_levels(
-        train_imputed_df,
-        categorical_features,
-    )
+    # Rejecting missing data in numerical features not covered
+    # by the declared reference imputation contract.
+    if feature_schema_profile == "reference_v1":
+        from functools import reduce
+        from operator import or_
+
+        from pyspark.sql import functions as F
+
+        unhandled_columns = [name for name in numeric_features if name not in medians]
+
+        if unhandled_columns:
+            invalid_condition = reduce(
+                or_,
+                (
+                    F.col(name).isNull() | F.isnan(F.col(name).cast("double"))
+                    for name in unhandled_columns
+                ),
+            )
+
+            for split_name, frame in (
+                ("train", train_imputed_df),
+                ("validation", validation_imputed_df),
+                ("test", test_imputed_df),
+            ):
+                if frame.filter(invalid_condition).limit(1).count() > 0:
+                    raise ValueError(
+                        f"{split_name} contains missing values in "
+                        "numeric features outside the reference_v1 "
+                        "imputation contract"
+                    )
+
+    # Using either train-observed levels or a declared domain contract.
+    if feature_schema_profile == "reference_v1":
+        category_levels = {
+            name: list(levels) for name, levels in REFERENCE_V1_CATEGORY_LEVELS.items()
+        }
+    else:
+        category_levels = fit_category_levels(
+            train_imputed_df,
+            categorical_features,
+        )
 
     train_encoded_df = apply_one_hot_encoding(
         train_imputed_df,
@@ -182,6 +248,14 @@ def prepare_model_dataset(
         medians,
         category_levels,
     )
+
+    # Verifying the exact reference input names and ordering.
+    if feature_schema_profile == "reference_v1":
+        if tuple(final_feature_columns) != (REFERENCE_V1_FINAL_FEATURE_COLUMNS):
+            raise ValueError(
+                "Prepared feature schema differs from the verified "
+                "41-feature reference contract"
+            )
 
     # Fitting scaling parameters using training data only.
     scaler_parameters = fit_scaler(

@@ -1,0 +1,7 @@
+# Experiment-specific training overrides.
+# Unspecified parameters inherit TRAINING_CONFIG defaults.
+
+epochs: 20
+batch_size: 128
+learning_rate: 0.001
+run_mode: development
