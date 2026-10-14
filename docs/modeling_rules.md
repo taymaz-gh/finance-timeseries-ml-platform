@@ -639,7 +639,7 @@ score. Macro-F1 is then obtained by assigning equal weight to all classes:
 
     Macro-F1 = (1 / C) Σ F1_c
 
-where C is the number of target classes.
+where C is the number of target classes (see APPENDIX).
 
 Thus, each of the four risk states contributes equally to the final
 macro-F1, regardless of its frequency in the evaluation data.
@@ -1204,3 +1204,59 @@ full-scale experiments. The tests cover, among other aspects:
 This test structure is intended to detect changes in the data-to-prediction
 pipeline before they affect the results of computationally more expensive
 model experiments.
+
+
+---
+---
+---
+
+APPENDIX
+
+### Fixed-Class Macro-F1 and Zero-Support Convention
+
+The project evaluates classification performance over four predefined
+risk classes:
+
+1. Normal
+2. Elevated risk
+3. Liquidity stress
+4. Delinquency risk
+
+For each class, precision, recall, and F1 are computed from the
+one-vs-rest confusion counts:
+
+- Precision = TP / (TP + FP)
+- Recall = TP / (TP + FN)
+- F1 = 2 × Precision × Recall / (Precision + Recall)
+
+**Zero-division convention:** If a metric's denominator is zero,
+its value is defined as `0.0`.
+
+In particular, a class absent from both the ground-truth and
+predicted labels receives precision, recall, and F1 equal to zero.
+
+Macro-F1 is computed as the arithmetic mean of the four
+class-specific F1 scores, including classes with zero support:
+
+\[
+\mathrm{MacroF1} = \frac{1}{4}\sum_{k=0}^{3} F1_k
+\]
+
+For example, if an evaluation contains three observations from
+a single class and all three predictions are correct:
+
+- Accuracy = 1.0
+- F1 of the represented class = 1.0
+- F1 of each absent class = 0.0
+- Macro-F1 = (1 + 0 + 0 + 0) / 4 = 0.25
+
+This fixed-class convention is implemented in
+`src/finance_ml/models/metrics.py` and in the account/date
+inference evaluation.
+
+**Interpretation:** A very small or single-class evaluation sample
+cannot reliably establish four-class model performance. Its accuracy
+may be perfect while its fixed-class macro-F1 is low.
+
+Confusion matrices use rows for true classes and columns for
+predicted classes, in the predefined class order.

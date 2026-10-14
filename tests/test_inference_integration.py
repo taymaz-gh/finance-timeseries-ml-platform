@@ -1,8 +1,9 @@
-"""Optional real Spark/Keras integration test using an existing Step 24 bundle.
+"""Optional real Spark/Keras integration test using a saved local model bundle.
 
 Set FINANCE_ML_TEST_BUNDLE to a verified local-bundle directory. The test
 never trains a model and is skipped unless the directory is explicitly set.
 """
+
 from __future__ import annotations
 
 import os
@@ -14,8 +15,10 @@ import pytest
 from finance_ml.pipelines.inference_runner import run_local_synthetic_inference
 
 
-@pytest.mark.skipif(not os.getenv("FINANCE_ML_TEST_BUNDLE"),
-                    reason="Set FINANCE_ML_TEST_BUNDLE to an existing Step 24 bundle")
+@pytest.mark.skipif(
+    not os.getenv("FINANCE_ML_TEST_BUNDLE"),
+    reason="Set FINANCE_ML_TEST_BUNDLE to an existing local model bundle",
+)
 def test_real_offline_inference_with_saved_bundle(spark, tmp_path):
     """Checking label separation, causal coverage, and true model predictions."""
     outcome = run_local_synthetic_inference(

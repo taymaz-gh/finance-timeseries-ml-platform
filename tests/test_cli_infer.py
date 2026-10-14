@@ -52,12 +52,12 @@ def test_inference_dispatch_preserves_account_date_request(monkeypatch):
     assert "3/3" in r.output
 
 
-def test_unsupported_databricks_mode_is_explicit():
+def test_databricks_requires_explicit_uc_model_source():
     r = cli.invoke(app, ["infer", "--bundle", "dummy", "--account-id", "1",
                          "--start-date", "2026-03-05", "--end-date", "2026-03-07",
                          "--data-source", "databricks"])
     assert r.exit_code == 2
-    assert "Only --data-source synthetic" in r.output
+    assert "requires --model-source uc" in r.output
 
 
 def test_profile_cli_writes_no_model(monkeypatch):

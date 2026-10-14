@@ -303,63 +303,149 @@ def profile_init(
 
 @app.command()
 def infer(
-    bundle: Path = typer.Option(..., "--bundle", help="Local model bundle directory."),
     account_id: list[str] = typer.Option(..., "--account-id",
-        help="Account to score (521 or ACC_00521); repeat for multiple accounts."),
+        help="Account to score (521 or ACC_00521); repeat for several."),
     start_date: str = typer.Option(..., "--start-date", help="Inclusive requested YYYY-MM-DD."),
     end_date: str = typer.Option(..., "--end-date", help="Inclusive requested YYYY-MM-DD."),
+    bundle: Path | None = typer.Option(None, "--bundle",
+        help="Local model-bundle directory; required for synthetic inference only."),
     profile: Path | None = typer.Option(None, "--profile",
-        help="Model-bound synthetic provenance; defaults to bundle sidecar."),
+        help="Local synthetic provenance profile (not applicable to UC)."),
     data_source: str = typer.Option("synthetic", "--data-source",
-        help="Currently supported: synthetic. Databricks requires a separate implementation."),
+        help="Inference data source: synthetic or databricks."),
+    model_source: str = typer.Option("local", "--model-source",
+        help="Model source: local (saved Keras bundle) or uc (Unity Catalog v1)."),
+    model_name: str | None = typer.Option(None, "--model-name",
+        help="Pinned UC model name; only the verified v1 cohort is supported."),
+    model_version: str | None = typer.Option(None, "--model-version",
+        help="Pinned UC model version; only v1 cohort is supported."),
+    query_method: str | None = typer.Option(None, "--query-method",
+        help="Databricks SQL query method: connector or sqlalchemy."),
+    evaluate: bool = typer.Option(False, "--evaluate",
+        help="Opt in to read separate UC holdout truth and compute post-scoring metrics."),
     simulate_future: bool = typer.Option(False, "--simulate-future",
-        help="Opt into simulating financial observations beyond the profile's available dates."),
+        help="Explicit local synthetic extension only; never permitted for Databricks."),
     smoke: bool = typer.Option(False, "--smoke",
-        help="Real inference; require at most 2 selected accounts and 7 requested days."),
+        help="Real inference; at most two selected accounts and seven days."),
     dry_run: bool = typer.Option(False, "--dry-run",
-        help="Check bundle/profile/request without Spark or TensorFlow inference."),
+        help="Check request without remote querying, Spark or TensorFlow inference."),
     output_dir: Path = typer.Option(Path("artifacts/inference"), "--output-dir",
-        help="Base directory for run-specific local output."),
+        help="Root for a new, run-specific local results directory."),
 ) -> None:
-    """Predict selected accounts over an explicit period with causal endpoints."""
-    from finance_ml.pipelines.account_inference_runner import (
-        public_plan, run_account_inference, validate_account_request,
-    )
+    """Predict risk states for selected accounts and a calendar interval."""
     if dry_run and smoke:
         typer.echo("Choose --dry-run OR --smoke, not both.", err=True)
         raise typer.Exit(code=2)
-    if data_source != "synthetic":
-        typer.echo("Only --data-source synthetic is implemented for this CLI.", err=True)
+    if data_source == "databricks":
+        if model_source != "uc":
+            typer.echo("Databricks inference requires --model-source uc.", err=True)
+            raise typer.Exit(code=2)
+        if bundle is not None or profile is not None or simulate_future:
+            typer.echo("UC inference rejects --bundle, --profile and --simulate-future.", err=True)
+            raise typer.Exit(code=2)
+        from finance_ml.data.databricks_holdout import (
+            MODEL_NAME, MODEL_VERSION, validate_uc_request,
+        )
+        model_name = MODEL_NAME if model_name is None else model_name
+        model_version = MODEL_VERSION if model_version is None else model_version
+        query_method = "connector" if query_method is None else query_method
+        from finance_ml.pipelines.databricks_inference_runner import (
+            run_databricks_inference, uc_public_plan,
+        )
+        try:
+            request = validate_uc_request(
+                account_ids=account_id, start_date=start_date,
+                end_date=end_date, model_name=model_name,
+                model_version=model_version, query_method=query_method,
+                smoke=smoke, evaluate=evaluate,
+            )
+        except (ValueError, TypeError) as exc:
+            typer.echo(f"Invalid Databricks inference request: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo("Inference plan:")
+        typer.echo(json.dumps(uc_public_plan(request, model_name=model_name,
+                                            model_version=model_version), indent=2))
+        if dry_run:
+            typer.echo("Dry run complete. No remote query, MLflow model, Spark or predictions started.")
+            return
+        typer.echo("Starting read-only Databricks Gold + pinned UC inference...")
+        try:
+            output = run_databricks_inference(
+                account_ids=account_id, start_date=start_date,
+                end_date=end_date, model_name=model_name,
+                model_version=model_version, query_method=query_method,
+                smoke=smoke, evaluate=evaluate, output_dir=output_dir,
+            )
+        except Exception as exc:
+            typer.echo(f"Databricks inference failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    elif data_source == "synthetic":
+        if (model_source != "local" or evaluate or model_name is not None
+                or model_version is not None or query_method is not None):
+            typer.echo("Synthetic replay requires --model-source local; UC model/query options and --evaluate are unsupported.", err=True)
+            raise typer.Exit(code=2)
+        if bundle is None:
+            typer.echo("Synthetic inference requires --bundle.", err=True)
+            raise typer.Exit(code=2)
+        from finance_ml.pipelines.account_inference_runner import (
+            public_plan, run_account_inference, validate_account_request,
+        )
+        try:
+            request = validate_account_request(
+                bundle_dir=bundle, account_ids=account_id,
+                start_date=start_date, end_date=end_date, profile_path=profile,
+                simulate_future=simulate_future, smoke=smoke, output_dir=output_dir,
+            )
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            typer.echo(f"Invalid inference request: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo("Inference plan:")
+        typer.echo(json.dumps(public_plan(request), indent=2))
+        if dry_run:
+            typer.echo("Dry run complete. No Spark session or model inference started.")
+            return
+        typer.echo("Starting account/date-selected local inference...")
+        try:
+            output = run_account_inference(
+                bundle_dir=bundle, account_ids=account_id,
+                start_date=start_date, end_date=end_date, profile_path=profile,
+                simulate_future=simulate_future, smoke=smoke, output_dir=output_dir,
+            )
+        except Exception as exc:
+            typer.echo(f"Inference failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    else:
+        typer.echo("Choose --data-source synthetic or databricks.", err=True)
         raise typer.Exit(code=2)
-    try:
-        request = validate_account_request(
-            bundle_dir=bundle, account_ids=account_id,
-            start_date=start_date, end_date=end_date, profile_path=profile,
-            simulate_future=simulate_future, smoke=smoke,
-            output_dir=output_dir,
-        )
-    except (ValueError, FileNotFoundError, OSError) as exc:
-        typer.echo(f"Invalid inference request: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
-    typer.echo("Inference plan:")
-    typer.echo(json.dumps(public_plan(request), indent=2))
-    if dry_run:
-        typer.echo("Dry run complete. No Spark session or model inference started.")
-        return
 
-    typer.echo("Starting account/date-selected local inference...")
-    try:
-        output = run_account_inference(
-            bundle_dir=bundle, account_ids=account_id,
-            start_date=start_date, end_date=end_date, profile_path=profile,
-            simulate_future=simulate_future, smoke=smoke,
-            output_dir=output_dir,
-        )
-    except Exception as exc:
-        typer.echo(f"Inference failed: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    # Reporting inference coverage.
     summary = output["summary"]
+
     typer.echo(f"Predictions: {summary['predictions']}/{summary['requested']}")
     typer.echo(f"Insufficient-context dates: {summary['insufficient_context']}")
-    typer.echo(f"Inference artifacts: {output['run_dir']}")
+
+    # Reporting available post-scoring evaluation metrics.
+    evaluations = summary.get("evaluations", {})
+
+    if evaluations:
+        typer.echo("\nEvaluation summary:")
+        typer.echo(
+            "Macro-F1 uses all four risk classes; "
+            "undefined per-class F1 values are set to zero."
+        )
+
+        for cohort_name, metrics in sorted(evaluations.items()):
+            n_evaluated = metrics.get("n_evaluated", 0)
+
+            typer.echo(f"\n  Cohort: {cohort_name}")
+            typer.echo(f"  Evaluated observations: {n_evaluated}")
+
+            if n_evaluated:
+                typer.echo(f"  Accuracy: {metrics['accuracy']:.4f}")
+                typer.echo(f"  Macro-F1: {metrics['macro_f1']:.4f}")
+            else:
+                typer.echo("  No eligible observations to evaluate.")
+
+    # Reporting the location of persisted inference artifacts.
+    typer.echo(f"\nInference artifacts: {output['run_dir']}")
     typer.echo("Inference completed successfully.")

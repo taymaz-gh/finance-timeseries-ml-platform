@@ -23,50 +23,145 @@ See [holdout pipeline documentation](docs/holdout_data_pipeline.md) for the two-
 
 ## Command-Line Interface (CLI)
 
-The project provides a Typer-based CLI for executing and managing
-machine-learning workflows.
+The platform provides a Typer-based CLI for model training,
+synthetic-data simulation, and account/date-based inference.
+It supports standalone execution with local Spark and
+TensorFlow/Keras, together with optional Databricks and
+Unity Catalog integration.
 
 ### Installation
 
-From the project root:
+From the repository root:
 
 ```powershell
 python -m pip install -e ".[dev]"
 ```
 
-### Execution methods
-
-The CLI can be invoked through either the installed executable:
+Verify the installation:
 
 ```powershell
-finance-ml --help
 finance-ml check
-finance-ml train --dry-run
+finance-ml --help
 ```
 
-Or directly through Python's module execution mechanism:
+The CLI can also be invoked using `python -m finance_ml`.
+
+### Supported workflows
+
+| Workflow | Data source | Model source or destination | Execution |
+|---|---|---|---|
+| Local training | Synthetic data | Saved local Keras bundle | Local |
+| Databricks-backed training | Databricks Gold tables | Local bundle; optional MLflow logging and UC registration | Local |
+| Local inference | Replayed synthetic observations | Saved local Keras bundle | Local |
+| Databricks/UC inference | Persisted Databricks Gold tables | Registered Unity Catalog model | Local |
+
+Training and inference are separate operations. Inference never
+re-trains models, refits preprocessing statistics, or registers
+models in Unity Catalog.
+
+### Training
+
+Local synthetic training:
 
 ```powershell
-python -m finance_ml --help
-python -m finance_ml check
-python -m finance_ml train --dry-run
+finance-ml train `
+    --data-source synthetic `
+    --config configs/training_synthetic.yaml `
+    --synthetic-accounts 8 `
+    --synthetic-days 60 `
+    --dry-run
 ```
 
-Both methods invoke the same CLI application.
+Remove `--dry-run` to execute the training run.
 
-The installed `finance-ml` command is registered through
-`[project.scripts]` in `pyproject.toml`, whereas `python -m finance_ml`
-uses `finance_ml/__main__.py`.
-
-### Training dry run
+Databricks-backed training configuration check:
 
 ```powershell
-finance-ml train --dry-run
+finance-ml train `
+    --data-source databricks `
+    --query-method connector `
+    --run-mode development `
+    --dry-run
 ```
 
-This validates and displays training configuration without querying
-Databricks, initializing TensorFlow, training a model, or writing
-artifacts.
+For Databricks-backed training, the standalone CLI retrieves
+Gold data through the Databricks SQL Connector or SQLAlchemy,
+then performs Spark preprocessing and model training locally.
 
-**Note:** Actual training execution is not connected to the CLI yet.
+MLflow logging and Unity Catalog registration are controlled
+by explicit configuration. UC registration additionally
+requires `--allow-uc-registration` during execution.
+
+### Inference
+
+Inference selects account identifiers and an inclusive
+calendar interval. The selected model's persisted preprocessing
+metadata defines the exact input feature schema.
+
+**Local model inference:**
+
+```powershell
+$bundle = "artifacts\synthetic_training\<local-model-run-directory>"
+
+finance-ml infer `
+    --data-source synthetic `
+    --bundle "$bundle" `
+    --account-id 9 `
+    --start-date 2026-02-10 `
+    --end-date 2026-02-12 `
+    --smoke
 ```
+
+Local synthetic replay requires a checkpoint-bound provenance
+profile. For older bundles, this can be created using
+`finance-ml profile-init` with the verified training parameters.
+
+**Registered Unity Catalog model inference:**
+
+```powershell
+finance-ml infer `
+    --data-source databricks `
+    --model-source uc `
+    --model-name finance_ml.models.lstm_risk_classifier `
+    --model-version 1 `
+    --account-id 521 `
+    --start-date 2026-03-10 `
+    --end-date 2026-03-12 `
+    --smoke `
+    --evaluate
+```
+
+The Databricks/UC inference workflow:
+
+1. Retrieves selected Gold features and required historical context.
+2. Loads the specified registered model and its verified preprocessing metadata.
+3. Applies the saved transformations and executes inference locally.
+4. Optionally retrieves ground-truth labels for evaluation.
+5. Saves predictions, coverage, and evaluation reports locally.
+
+No Databricks tables or registered models are modified.
+
+### Execution modes and artifacts
+
+- `--dry-run`: validates configuration and displays an execution plan without training or inference.
+- `--smoke`: executes a small, real inference request to verify the end-to-end workflow.
+- Normal execution: processes the requested observations subject to resource and validation limits.
+- `--evaluate`: enables ground-truth evaluation for Databricks-backed inference.
+
+Inference results are written to run-specific directories under
+`artifacts/inference/`, including:
+
+- `predictions.csv`
+- `coverage.csv`
+- `inference_report.json`
+
+Evaluation reports include accuracy, fixed-four-class macro-F1,
+per-class metrics, and confusion matrices when labels are available.
+
+### Documentation
+
+- [Complete CLI guide](docs/cli_guide.md) — commands, configurations, execution modes, PowerShell examples, and architecture diagrams.
+- [Model training pipeline](docs/model_training_pipeline.md) — training and MLflow integration.
+- [Model inference pipeline](docs/model_inference_pipeline.md) — model loading, preprocessing contracts, and batch inference.
+- [Holdout evaluation](docs/holdout_data_pipeline.md) — Date, Account, and Joint Holdout cohorts.
+- [Modeling and metric conventions](docs/modeling_rules.md) — sequence modeling and evaluation methodology.

@@ -19,7 +19,16 @@ Use `finance-ml --help`, `finance-ml train --help`, `finance-ml infer --help`, a
 From the repository root, while `.venv` is activated:
 
 ```powershell
-$bundle = 'artifacts\synthetic_training\run_20261014T061609072027Z_ca1a03e520'
+# Selecting the most recent completed local model bundle.
+$bundle = (
+    Get-ChildItem "artifacts\synthetic_training" -Directory |
+    Where-Object {
+        Test-Path (Join-Path $_.FullName "bundle_manifest.json")
+    } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+).FullName
+
 Test-Path "$bundle\bundle_manifest.json"
 finance-ml infer --help
 ```
@@ -28,7 +37,7 @@ finance-ml infer --help
 
 ### Legacy local-bundle provenance (one-time setup)
 
-Our existing light **local** model trained on **8 synthetic development accounts**, 60 days from `2026-01-01`, simulator seed `42`. The checkpoint stores the fitted feature transforms but **does not persist a verified population/seed record**. Declare these values explicitly before first account/date inference:
+An example **local** model trained on **8 synthetic development accounts**, 60 days from `2026-01-01`, simulator seed `42`. The checkpoint stores the fitted feature transforms but **does not persist a verified population/seed record**. Declare these values explicitly before first account/date inference:
 
 ```powershell
 finance-ml profile-init --bundle "$bundle" --development-accounts 8 --historical-days 60 --seed 42 --start-date 2026-01-01 --observed-through 2026-04-30 --max-new-accounts 1000
@@ -69,11 +78,11 @@ Dates before January 1 are rejected. Dates after April 30 without `--simulate-fu
 
 ### Causal endpoint policy
 
-The local model accepts seven consecutive timesteps and 31 features (for the demonstrated bundle). For a requested date `t`, serving builds a trailing window ending at `t`; predictions use the model output at the **final sequence position**. No future-dated feature is allowed. The first six days of a new account cannot be scored without sufficient history; they appear in coverage output as `insufficient_context`. The original model-development validation instead **trimmed two positions at each end and aggregated overlapping windows**. Those macro-F1 metrics are not directly comparable to causal endpoint scores.
+The inference CLI reads sequence length and ordered features from the **selected model**. The demonstrated local bundle has 7 timesteps and 31 features; the separately registered UC LSTM v1 has 7 timesteps and 41 features. For a requested date `t`, serving builds a trailing window ending at `t`; predictions use the model output at the **final sequence position**. No future-dated feature is allowed. The first six days of a new account cannot be scored without sufficient history; they appear in coverage output as `insufficient_context`. The original model-development validation instead **trimmed two positions at each end and aggregated overlapping windows**. Those macro-F1 metrics are not directly comparable to causal endpoint scores.
 
 ### Source and provenance boundaries
 
-`--data-source synthetic` is currently supported. It reconstructs selected account histories **in memory** from the configured stateful simulator, with deterministic known-account history and new-account replay; it does not query the persisted Databricks holdout tables. Databricks-backed inference and loading the registered UC model require a separate implementation and are explicitly rejected by this CLI. A local dry run can verify the bundle, profile, account IDs, requested range, and guards but cannot independently authenticate a user-declared simulator seed.
+`--data-source synthetic --model-source local` reconstructs selected account histories **in memory** from the configured stateful simulator; it does not query Databricks. `--data-source databricks --model-source uc` reads **persisted Gold tables** and loads the **pinned UC model v1**, with separately documented cohort boundaries. A dry run checks local request constraints without connecting to Databricks or importing TensorFlow/MLflow. A local dry run cannot independently authenticate a user-declared simulator seed.
 
 `--simulate-future` generates **future financial predictors** from preserved simulator latent-state and RNG snapshots, then classifies them. It does **not** perform future risk forecasting from April 30 alone. New-account replay follows the simulator's original fixed shared random-number stream through the profile's observed horizon; any extension then resumes the selected account's independent snapshot. This avoids changing historical observations when the requested end date changes. The LSTM's hidden/cell states are not persisted between CLI calls.
 
@@ -170,8 +179,315 @@ Import-Csv "$run\predictions.csv" | Select-Object -First 5 | Format-Table
 Get-Content "$run\inference_report.json"
 ```
 
+
+### Inspecting evaluation reports in PowerShell
+
+Inference results are saved in run-specific directories under
+`artifacts/inference/`.
+
+When evaluation is available, `inference_report.json` contains
+an `evaluations` object with metrics grouped by cohort.
+
+To inspect the most recent inference result:
+
+```powershell
+# Finding the most recent inference directory.
+$run = (
+    Get-ChildItem "artifacts\inference" -Directory -Filter "infer_*" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+).FullName
+
+# Loading the JSON report.
+$report = Get-Content "$run\inference_report.json" -Raw |
+    ConvertFrom-Json
+
+# Listing the evaluated cohorts.
+$report.evaluations.PSObject.Properties.Name
+
+# Displaying Account Holdout evaluation metrics.
+$report.evaluations.account_holdout | Format-List
+
+# Displaying individual class metrics.
+$report.evaluations.account_holdout.per_class | Format-List *
+
+# Displaying the confusion matrix.
+$report.evaluations.account_holdout.confusion_matrix |
+    ConvertTo-Json -Depth 5
+```
+
+Replace `account_holdout` with `date_holdout` or `joint_holdout`
+to inspect a different cohort.
+
+For local synthetic continuation experiments,
+`simulated_extension` may also appear as an evaluation cohort.
+
+The evaluation includes:
+
+- Number of evaluated observations
+- Accuracy
+- Four-class macro-F1
+- Per-class precision, recall, F1, and support
+- Confusion matrix
+
+The macro-F1 implementation assigns zero F1 to classes absent
+from both actual and predicted labels. This convention is
+documented in `docs/modeling_rules.md`.
+
+For Databricks/Unity Catalog inference, ground-truth labels are
+queried only when `--evaluate` is explicitly supplied.
+Local synthetic replay can calculate simulator-based metrics
+without that flag.
+
+Metrics computed from a few observations serve as functional
+checks, not reliable model-performance estimates.
+
+
+
 ## 6. Execution limits and future development
 
 Local batch execution enforces at most 25 selected accounts, 20,000 requested/contextual rows, and 60 opt-in simulation-extension days; an account ID must lie within the declared synthetic population. Replay can still advance the random generator for unselected predecessor accounts to reproduce the original simulator stream. Original Spark session ownership rules are retained: **never stop caller-owned sessions, reuse existing sessions, stop newly created standalone sessions on success/failure, and preserve the original exception if cleanup also fails**.
 
-Future milestones: store simulator provenance **automatically at synthetic training time** (rather than a user-declared legacy sidecar), implement read-only Databricks query paths and registered UC-model loading with **model-specific** cohort provenance, and add a true forecasting/serving mode only with an explicit forecasting specification. Do not confuse these with the currently tested local synthetic classification workflow.
+Future milestones: store simulator provenance **automatically at synthetic training time** (rather than a user-declared legacy sidecar), consolidate synthetic data-quality injection and fixed feature-schema policy, and add a true forecasting/serving mode only with an explicit forecasting specification. The Databricks/UC v1 inference path has been verified through live read-only execution against the registered model and all three holdout cohorts. These smoke tests demonstrate functional integration, not comprehensive model-performance validation. Do not confuse these with the currently tested local synthetic classification workflow.
+
+
+
+## 7. Model training: local and Databricks-backed workflows
+
+The training CLI separates the source of training data from
+the destination of model artifacts.
+
+Both standalone training workflows execute Spark preprocessing
+and TensorFlow/Keras training on the local computer.
+
+| Data source | Execution | Model destination |
+|---|---|---|
+| Synthetic | Local Spark and Keras | Local Keras bundle |
+| Databricks | Local Spark and Keras, using remote Gold data | Local bundle and optional MLflow logging |
+| Databricks with UC registration enabled | Local Spark and Keras, using remote Gold data | MLflow LoggedModel and registered UC model |
+
+The registered-model inference workflow can subsequently load
+an existing UC model without retraining it.
+
+### Local synthetic training
+
+Dry-run validation:
+
+```powershell
+finance-ml train `
+    --data-source synthetic `
+    --config configs/training_synthetic.yaml `
+    --synthetic-accounts 8 `
+    --synthetic-days 60 `
+    --synthetic-seed 42 `
+    --dry-run
+```
+
+Execute training:
+
+```powershell
+finance-ml train `
+    --data-source synthetic `
+    --config configs/training_synthetic.yaml `
+    --synthetic-accounts 8 `
+    --synthetic-days 60 `
+    --synthetic-seed 42
+```
+
+The pipeline generates synthetic account observations, processes
+them through Silver and Gold, fits preprocessing on the training
+partition, trains the LSTM, and saves the selected checkpoint
+and its preprocessing metadata.
+
+Synthetic CLI training explicitly disables MLflow logging and
+Unity Catalog registration.
+
+The current local synthetic workflow does not inject the
+deliberate Bronze data-quality corruption used in the original
+Databricks data-preparation workflow. Consequently, the fitted
+input feature schema may differ between training runs.
+This limitation is tracked separately from inference.
+
+### Databricks-backed training
+
+For standalone execution, select either the Databricks SQL
+Connector or SQLAlchemy:
+
+```powershell
+finance-ml train `
+    --data-source databricks `
+    --query-method connector `
+    --run-mode development `
+    --dry-run
+```
+
+After reviewing the resolved configuration, remove `--dry-run`
+to execute training.
+
+The standalone CLI does not use local Spark to access Unity
+Catalog tables directly. Instead, the connector retrieves
+Databricks Gold data, which are processed through local Spark
+and TensorFlow/Keras.
+
+When training runs with `log_to_mlflow=true`, MLflow tracking
+must be configured before execution. Development runs do not
+register a model in Unity Catalog.
+
+### Optional Unity Catalog model registration
+
+UC registration is a separate, explicitly authorized
+operation. It is not performed by the inference CLI.
+
+For final training, an external YAML configuration may set:
+
+```yaml
+run_mode: final
+query_method: connector
+log_to_mlflow: true
+register_in_uc: true
+registered_model_name: finance_ml.models.lstm_risk_classifier
+save_keras_checkpoint: true
+```
+
+For example, save this configuration as
+`configs/training_uc_final.yaml`.
+
+Validate it without execution:
+
+```powershell
+finance-ml train `
+    --data-source databricks `
+    --config configs/training_uc_final.yaml `
+    --dry-run
+```
+
+When intentionally training and registering a new model version,
+the actual execution additionally requires
+`--allow-uc-registration`.
+
+The environment must have appropriate Databricks credentials,
+MLflow tracking configuration, and Unity Catalog permissions.
+
+**Caution:** A final training run may create a new registered
+model version. Do not run it merely to test inference against
+an already registered model.
+
+### Training execution architecture
+
+```text
+finance-ml train
+    |
+    +--> CLI configuration / validation
+    |
+    +--> Data source
+    |      |
+    |      +--> Synthetic generator
+    |      |      +--> Local Spark Silver / Gold
+    |      |
+    |      +--> Databricks Gold table
+    |             +--> SQL Connector / SQLAlchemy
+    |             +--> Local Spark preprocessing
+    |
+    +--> Chronological train / validation / test split
+    |
+    +--> Fit training-only imputation, encoding and scaling
+    |
+    +--> Build seven-timestep sequences
+    |
+    +--> Train and evaluate LSTM
+    |
+    +--> Save run-specific local artifacts
+    |
+    +--> Optional MLflow logging
+           |
+           +--> Optional UC registration (explicitly authorized)
+```
+
+Saved preprocessing metadata are model-specific. Inference
+must reproduce their exact feature order and transformations;
+it must never refit preprocessing on requested observations.
+
+## 8. Read-only Databricks / Unity Catalog inference
+
+These commands retain the **same account/date interface**. There is no separate `--holdout` selector. The **selected model's population** determines whether an account is known or new.
+
+```powershell
+# Offline preflight: no query, MLflow load, Spark or model inference.
+finance-ml infer --data-source databricks --model-source uc --account-id 521 --start-date 2026-03-10 --end-date 2026-03-12 --dry-run
+
+# Actual remote-backed smoke run (two accounts and seven days maximum).
+finance-ml infer --data-source databricks --model-source uc --account-id 521 --start-date 2026-03-10 --end-date 2026-03-12 --smoke
+
+# One account, later dates; separately query simulated ground truth for metrics.
+finance-ml infer --data-source databricks --model-source uc --account-id 2001 --start-date 2026-04-01 --end-date 2026-04-10 --evaluate
+
+# Explicit SQLAlchemy option instead of the Databricks SQL Connector.
+finance-ml infer --data-source databricks --model-source uc --query-method sqlalchemy --account-id 521 --start-date 2026-03-10 --end-date 2026-03-20
+```
+
+The **only currently supported registered cohort** is `finance_ml.models.lstm_risk_classifier` version `1`. The CLI refuses other versions rather than applying v1's account/date definitions to an unrelated model. The registered-model loader checks the version's preprocessing run, metadata SHA-256, feature order and model input shape; UC v1 is expected to have **7 timesteps, 41 features, 4 classes**. In contrast, the local example checkpoint has **31 features** and an eight-account development population.
+
+The persisted UC model population and dates come from `notebooks/10_build_future.ipynb` and `docs/holdout_data_pipeline.md`:
+
+| UC account numbers | Jan 1–Mar 1, 2026 | Mar 2–Apr 30, 2026 |
+|---|---|---|
+| 1–2000 | Development period (not independent evaluation) | **Date Holdout** |
+| 2001–3000 | **Account Holdout** | **Joint Holdout** |
+
+Dates before January 1 and after April 30 are rejected. The Databricks branch **never accepts `--simulate-future`, `--profile`, or `--bundle`**; synthetic continuation is not a fallback for unavailable persisted data. The maximum 25 selected accounts/20,000 requested observations and smoke limit (2 accounts/7 days) remain in effect. No original tables or registered model are changed.
+
+### UC execution modules: dry-run
+
+```text
+finance-ml infer --data-source databricks --model-source uc ... --dry-run
+    |
+    +--> cli.py
+         +--> data/databricks_holdout.py
+              +--> Validate account IDs, date range, fixed v1 population
+              +--> Select Gold table names and predicted cohorts
+    |
+    +--> Print plan and warnings --> EXIT
+    [No remote connection, Spark, model load or local result files]
+```
+
+### UC execution modules: real smoke or full run
+
+```text
+finance-ml infer --data-source databricks --model-source uc ...
+    |
+    +--> cli.py --> pipelines/databricks_inference_runner.py
+          |
+          +--> models/loading.py
+          |      +--> MLflow / pinned Unity Catalog model v1
+          |      +--> Verify registered preprocessing artifact SHA-256
+          |      +--> Get 7 x 41 model input contract
+          |
+          +--> data/databricks_holdout.py
+          |      +--> Build bounded SELECTs for required source FEATURES only
+          |      +--> data/query.py (connector OR sqlalchemy)
+          |      +--> Persisted Gold (development / date / new account)
+          |      +--> Include preceding context, reject missing requested rows
+          |
+          +--> Typed local Spark Gold DataFrame
+          |      +--> pipelines/inference_runner.py: apply_saved_preprocessing
+          |      +--> preprocessing/imputation.py, encoding.py, scaling.py
+          |      +--> causal_endpoint_predictions (no future inputs)
+          |
+          +--> Optional --evaluate (after prediction only)
+          |      +--> Read separate UC truth tables (Date/Account/Joint)
+          |      +--> Exclude development-period metric computation
+          |
+          +--> artifacts/inference/infer_<unique-id>/
+                 +--> predictions.csv / coverage.csv / inference_report.json
+    [No UC table writes, model registration, training or silent simulation]
+```
+
+The Date Holdout Gold may require **up to six historical preceding dates** from the development Gold table. The account-holdout Gold already contains both historical and future rows for each new account; only relevant context/selection is read. For the **first six days of a genuinely new account**, coverage may report `insufficient_context` instead of fabricating a seven-step window. The policy is `causal_endpoint_v1`, different from original overlap-trimmed training metrics.
+
+**Authentication:** Keep the existing `.env` file private, with the Databricks SQL warehouse hostname, HTTP path, and access token; the existing configuration loader supplies query credentials. For registered-model loading, MLflow uses the Databricks host/token and `databricks` tracking plus `databricks-uc` registry URIs. A standalone local Spark session is used for saved feature transformations, and is stopped only if created by the runner. The SQL warehouse and Unity Catalog model may require distinct workspace permissions; neither can be verified by an offline dry run.
+
+**Date-key normalization:** Persisted Gold/truth timestamps are interpreted in UTC and normalized to UTC midnight. Local Spark represents observation keys as calendar dates; non-midnight source timestamps are rejected. This prevents timezone-aware SQL Connector timestamps from breaking pandas joins and avoids workstation daylight-saving shifts.
+
+**Evaluation:** `--evaluate` is opt-in: it queries `finance_ml.gold.account_labels_temporal_holdout` or `finance_ml.gold.account_labels_account_holdout` *after* model scoring, joins by `(account_id, date)`, and reports synthetic-diagnostic metrics only. Without it, the CLI does not read labels for evaluation. The original historical Gold table may contain labeled columns, but the real inference SELECT requests **only the ordered numeric and categorical input source columns** (plus keys).
+
+**Security and limitations:** SQL queries are allowlisted to three Gold tables and two truth tables, with strict account/date validation. No DDL, `INSERT`, or `OVERWRITE` operations are executed. Remote inference is bounded and driver-oriented; it is not a live serving endpoint. First test read access, MLflow loading and Spark execution with a single-account smoke run. Preserve the 31/41-feature discrepancy as a distinct training-schema improvement rather than changing registered-model preprocessing.

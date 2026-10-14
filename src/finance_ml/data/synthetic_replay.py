@@ -54,7 +54,12 @@ def replay_selected_accounts(profile: SyntheticProvenance,
     for number, (state, rng_state) in snapshots.items():
         resumed = np.random.default_rng()
         resumed.bit_generator.state = deepcopy(rng_state)
-        for day in pd.date_range(profile.development_end + pd.Timedelta(days=1), end, freq="D"):
+        # Continuing from the day after the development period.
+        for day in pd.date_range(
+            start=profile.development_end,
+            end=end,
+            freq="D",
+        )[1:]:
             rows.append(_day(state, day, resumed))
 
     if new:
@@ -72,7 +77,12 @@ def replay_selected_accounts(profile: SyntheticProvenance,
                 # never consuming the stream used by following new accounts.
                 resumed = np.random.default_rng()
                 resumed.bit_generator.state = deepcopy(new_rng.bit_generator.state)
-                for day in pd.date_range(baseline_dates[-1] + pd.Timedelta(days=1), end, freq="D"):
+                # Continuing from the day after the new-account baseline.
+                for day in pd.date_range(
+                    start=baseline_dates[-1],
+                    end=end,
+                    freq="D",
+                )[1:]:
                     rows.append(_day(state, day, resumed))
 
     if not rows:
