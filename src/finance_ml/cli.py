@@ -265,3 +265,101 @@ def simulate(
         typer.echo(f"  {name}: {len(frame)} rows")
     typer.echo("Future observations exclude ground-truth labels.")
     typer.echo("Simulation complete. No data was persisted.")
+
+@app.command("profile-init")
+def profile_init(
+    bundle: Path = typer.Option(..., "--bundle", help="Existing local Keras bundle directory."),
+    development_accounts: int = typer.Option(..., "--development-accounts", min=1,
+        help="Number of accounts in the model's synthetic development population."),
+    historical_days: int = typer.Option(..., "--historical-days", min=1,
+        help="Number of chronological days used to generate model-development data."),
+    observed_through: str = typer.Option(..., "--observed-through",
+        help="End of the simulator's bounded available observation period, YYYY-MM-DD."),
+    start_date: str = typer.Option("2026-01-01", "--start-date",
+        help="First synthetic calendar date, YYYY-MM-DD."),
+    seed: int = typer.Option(42, "--seed", min=0,
+        help="Original simulator random seed (not the model initialization seed)."),
+    max_new_accounts: int = typer.Option(1000, "--max-new-accounts", min=0,
+        help="Bounded number of new-account IDs in this cohort."),
+    profile: Path | None = typer.Option(None, "--profile",
+        help="Optional profile JSON destination; defaults to a sidecar in the bundle."),
+) -> None:
+    """Bind user-declared synthetic provenance to a legacy Keras bundle."""
+    from finance_ml.data.synthetic_provenance import create_profile
+    try:
+        result = create_profile(
+            bundle, development_accounts=development_accounts,
+            historical_days=historical_days, seed=seed,
+            start_date=start_date, observed_through=observed_through,
+            max_new_accounts=max_new_accounts, profile_path=profile,
+        )
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Profile creation failed: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"Synthetic provenance profile created: {result}")
+    typer.echo("Note: user-declared, not independently verified against training data.")
+    typer.echo("Existing checkpoint and bundle manifest are unchanged.")
+
+
+@app.command()
+def infer(
+    bundle: Path = typer.Option(..., "--bundle", help="Local model bundle directory."),
+    account_id: list[str] = typer.Option(..., "--account-id",
+        help="Account to score (521 or ACC_00521); repeat for multiple accounts."),
+    start_date: str = typer.Option(..., "--start-date", help="Inclusive requested YYYY-MM-DD."),
+    end_date: str = typer.Option(..., "--end-date", help="Inclusive requested YYYY-MM-DD."),
+    profile: Path | None = typer.Option(None, "--profile",
+        help="Model-bound synthetic provenance; defaults to bundle sidecar."),
+    data_source: str = typer.Option("synthetic", "--data-source",
+        help="Currently supported: synthetic. Databricks requires a separate implementation."),
+    simulate_future: bool = typer.Option(False, "--simulate-future",
+        help="Opt into simulating financial observations beyond the profile's available dates."),
+    smoke: bool = typer.Option(False, "--smoke",
+        help="Real inference; require at most 2 selected accounts and 7 requested days."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+        help="Check bundle/profile/request without Spark or TensorFlow inference."),
+    output_dir: Path = typer.Option(Path("artifacts/inference"), "--output-dir",
+        help="Base directory for run-specific local output."),
+) -> None:
+    """Predict selected accounts over an explicit period with causal endpoints."""
+    from finance_ml.pipelines.account_inference_runner import (
+        public_plan, run_account_inference, validate_account_request,
+    )
+    if dry_run and smoke:
+        typer.echo("Choose --dry-run OR --smoke, not both.", err=True)
+        raise typer.Exit(code=2)
+    if data_source != "synthetic":
+        typer.echo("Only --data-source synthetic is implemented for this CLI.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        request = validate_account_request(
+            bundle_dir=bundle, account_ids=account_id,
+            start_date=start_date, end_date=end_date, profile_path=profile,
+            simulate_future=simulate_future, smoke=smoke,
+            output_dir=output_dir,
+        )
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        typer.echo(f"Invalid inference request: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo("Inference plan:")
+    typer.echo(json.dumps(public_plan(request), indent=2))
+    if dry_run:
+        typer.echo("Dry run complete. No Spark session or model inference started.")
+        return
+
+    typer.echo("Starting account/date-selected local inference...")
+    try:
+        output = run_account_inference(
+            bundle_dir=bundle, account_ids=account_id,
+            start_date=start_date, end_date=end_date, profile_path=profile,
+            simulate_future=simulate_future, smoke=smoke,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        typer.echo(f"Inference failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    summary = output["summary"]
+    typer.echo(f"Predictions: {summary['predictions']}/{summary['requested']}")
+    typer.echo(f"Insufficient-context dates: {summary['insufficient_context']}")
+    typer.echo(f"Inference artifacts: {output['run_dir']}")
+    typer.echo("Inference completed successfully.")
