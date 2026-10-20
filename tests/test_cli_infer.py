@@ -1,6 +1,7 @@
 """Check redesigned Typer commands without TensorFlow or a Spark JVM."""
 from datetime import date
 from unittest.mock import Mock
+from click.utils import strip_ansi
 
 from typer.testing import CliRunner
 
@@ -14,7 +15,7 @@ cli = CliRunner()
 def test_missing_account_or_date_is_rejected():
     r = cli.invoke(app, ["infer", "--bundle", "dummy", "--dry-run"])
     assert r.exit_code != 0
-    assert "--account-id" in r.output
+    assert "--account-id" in strip_ansi(r.output)
 
 
 def test_dry_run_does_not_score(monkeypatch):
