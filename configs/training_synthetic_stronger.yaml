@@ -1,0 +1,41 @@
+# Training a stronger local synthetic LSTM.
+# Preserving compatibility with the 41-feature API input contract.
+
+run_mode: development
+
+# Model input contract
+sequence_length: 7
+stride: 1
+feature_schema_profile: reference_v1
+scaling_method: mad
+n_classes: 4
+boundary_width: 2
+
+# Chronological data split
+train_fraction: 0.70
+validation_fraction: 0.15
+
+# Model architecture
+lstm_units: [64, 32]
+dropout_rate: 0.25
+
+# Training
+epochs: 40
+batch_size: 64
+learning_rate: 0.001
+patience: 7
+seed: 42
+
+# Learning-rate scheduling
+reduce_lr_on_plateau: true
+lr_factor: 0.5
+lr_patience: 3
+min_lr: 0.000001
+
+# Local experiment tracking
+save_keras_checkpoint: true
+log_to_mlflow: false
+register_in_uc: false
+
+# Saving each training run separately
+artifact_dir: artifacts/synthetic_training
