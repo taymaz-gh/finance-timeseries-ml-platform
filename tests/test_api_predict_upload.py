@@ -188,10 +188,8 @@ def test_prediction_requires_loaded_model(
 ) -> None:
     """Returning HTTP 503 when no model is configured."""
 
-    monkeypatch.delenv(
-        "FINANCE_ML_API_BUNDLE_DIR",
-        raising=False,
-    )
+    # Explicitly disabling model loading, including .env fallback.
+    monkeypatch.setenv("FINANCE_ML_API_BUNDLE_DIR", "")
 
     with TestClient(app) as client:
         response = client.post(

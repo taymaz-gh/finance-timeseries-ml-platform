@@ -10,8 +10,8 @@ from finance_ml.api.main import app
 def test_api_without_model(monkeypatch) -> None:
     """Checking API liveness when no model is configured."""
 
-    # Removing any existing model configuration.
-    monkeypatch.delenv("FINANCE_ML_API_BUNDLE_DIR", raising=False)
+    # Explicitly disabling model loading, including .env fallback.
+    monkeypatch.setenv("FINANCE_ML_API_BUNDLE_DIR", "")
 
     # Starting and stopping the FastAPI application.
     with TestClient(app) as client:
