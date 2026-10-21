@@ -6,6 +6,11 @@ import os
 
 import sys
 
+
+# Using a non-interactive Matplotlib backend during automated tests.
+os.environ["MPLBACKEND"] = "Agg"
+
+
 # Matching PySpark workers to the active pytest Python interpreter.
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable

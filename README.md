@@ -2,6 +2,110 @@
 
 An end-to-end project, built to practice production ML workflows, including data engineering, machine learning, MLOps, API deployment, orchestration, and business intelligence using simulated financial time-series data.
 
+## Quick start: local CSV prediction dashboard
+
+This section is for someone **cloning the repository onto a new Windows laptop**. The application accepts **raw, unlabeled account-day observations** and displays predictions from a **previously trained local Keras bundle**. The model bundle itself is **not included in Git**. No Databricks credentials are required for this local workflow.
+
+### A. Technical setup (once per machine)
+
+Prerequisites: Git, Python **3.12**, Java **17** (for local PySpark), and [uv](https://docs.astral.sh/uv/getting-started/installation/). Run the commands below in **PowerShell** from the repository root, after cloning:
+
+```powershell
+git clone https://github.com/taymaz-gh/finance-timeseries-ml-platform.git
+cd finance-timeseries-ml-platform
+uv sync --locked --extra api --extra dashboard --extra dev
+Copy-Item .env.example .env
+```
+
+The `uv` command creates/synchronizes `.venv` and installs API, dashboard, and testing dependencies from the committed lockfile. If using an activated environment instead, the corresponding `python` commands below work normally. **Do not commit `.env` or generated `artifacts/`.**
+
+### B. Obtain a local trained model
+
+**Option 1 — Already have a model:** Copy the complete **local Keras bundle directory** from an existing training run (not just the `.keras` file) into a local folder such as `artifacts/synthetic_training/<run-directory>`. The bundle contains `best_model.keras`, `preprocessing_metadata.json`, and `bundle_manifest.json`; it must pass the backend's bundle-integrity checks. Model files are not distributed by the repository.
+
+**Option 2 — Train a new model locally:** The existing Typer CLI supports synthetic-data training:
+
+```powershell
+uv run --locked --extra api --extra dashboard --extra dev finance-ml train `
+    --data-source synthetic `
+    --config configs/training_synthetic.yaml `
+    --synthetic-accounts 20 `
+    --synthetic-days 60 `
+    --synthetic-seed 42
+```
+
+Training uses the local Spark/TensorFlow stack and may take some time. Inspect the CLI output for the resulting bundle path under `artifacts/synthetic_training/`. The optional `--dry-run` checks configuration **without creating a model**. See the existing [CLI guide](docs/cli_guide.md) for details; the stronger configuration `configs/training_synthetic_stronger.yaml` is another experiment, not a required setup step.
+
+Edit `.env` and set the **directory** (not `best_model.keras`) using an absolute path, for example:
+
+```dotenv
+FINANCE_ML_API_BUNDLE_DIR=D:/Projects/finance-timeseries-ml-platform/artifacts/synthetic_training/<run-directory>
+```
+
+Replace `<run-directory>` with the actual folder name and use your own checkout location. Forward slashes work on Windows. Other fields in `.env.example` relate to optional Databricks workflows and can remain blank for local API inference.
+
+### C. Generate an uploadable sample CSV
+
+Run the **existing sample generator** from the repository root:
+
+```powershell
+uv run --locked --extra api --extra dashboard --extra dev python scripts/06_create_sample_upload_csv.py
+```
+
+It creates `artifacts/sample_accounts.csv` with **three synthetic accounts and 14 daily observations per account**, excluding the risk-state target labels. This is an example of the **user-upload format**, not a pretrained model or predictions.
+
+The CSV requires **exactly these 12 column names** (order is flexible):
+
+```text
+account_id,date,account_type,balance,cash_inflow,cash_outflow,transaction_count,credit_utilization,amount_due,amount_paid,payment_ratio,days_past_due
+```
+
+Dates must be in `YYYY-MM-DD` format, numeric fields must be numeric or missing, and uploaded CSVs must not contain `risk_state` or `risk_state_name`. The API limits files to **10 MiB** and **20,000 rows**. Duplicate account/date records are checked, then handled by the existing cleaning pipeline. Inference requires sufficient sequential history for each account.
+
+### D. Start both local services
+
+Open **two terminals** at the repository root (use the project environment in each):
+
+**Terminal 1 — FastAPI model-serving backend**
+
+```powershell
+uv run --locked --extra api --extra dashboard --extra dev python -m uvicorn finance_ml.api.main:app --host 127.0.0.1 --port 8000
+```
+
+Verify that `http://127.0.0.1:8000/ready` returns `{"status":"ready"}`. `http://127.0.0.1:8000/docs` exposes the automatically generated interactive API reference. An HTTP 503 from `/ready` means the saved model is not available; check the bundle path and backend logs.
+
+**Terminal 2 — Streamlit user interface**
+
+```powershell
+uv run --locked --extra api --extra dashboard --extra dev python -m streamlit run src/finance_ml/dashboard/app.py --server.address 127.0.0.1 --server.port 8501
+```
+
+Open **http://127.0.0.1:8501** in your browser. Both commands bind to the local machine only; this development setup is **not a public deployment**. Stop a server with `Ctrl+C` in its terminal.
+
+### E. Non-technical user workflow
+
+With both services already started by a technical operator, the user only needs the Streamlit page:
+
+1. Open `http://127.0.0.1:8501` on that same computer.
+2. Click **Browse files** and choose a raw unlabeled CSV, such as `artifacts/sample_accounts.csv`.
+3. Click **Generate predictions**. Streamlit asks FastAPI to validate the CSV, then requests actual local-model inference.
+4. Review the summary, select an account, inspect its predicted risk-state timeline, class-probability plot, distribution and coverage table.
+5. Click **Download all predictions (CSV)** to export results.
+
+The backend automatically saves full historical runs under `artifacts/api_inference/runs/<run-id>/` and refreshes `artifacts/api_inference/latest_predictions.csv`, `latest_coverage.csv`, `latest_account_context.csv`, and `latest_summary.json`. The dashboard also holds the current result in the user's Streamlit session; it does **not** train or reload the model on each click.
+
+**Interpretation and safety:** These are **same-date risk classifications** based on current and earlier uploaded observations, **not forecasts of unobserved future data**. Synthetic training data do not validate real-world banking performance. The application currently has **no authentication or HTTPS**; keep it loopback-only and do not upload sensitive customer data to this development environment.
+
+### F. Tests and troubleshooting
+
+```powershell
+uv run --locked --extra api --extra dashboard --extra dev python -m pytest -q tests/test_dashboard_app.py
+```
+
+For full verification, run `python -m pytest -q` in the synchronized environment. Common problems: `Connection refused` indicates FastAPI is not running; HTTP 503 means no loaded model; an HTTP 422 usually signals incorrect CSV columns, types, dates, or target leakage; too few observations produce `insufficient_context`. A dataset with fewer than the trained model's sequence length (usually 7) per account cannot produce predictions. Consult [API and dashboard developer guide](docs/api_dashboard_guide.md) for complete workflow diagrams and module ownership.
+
+---
+
 ## Implemented holdout evaluation
 
 The platform generates synthetic financial account trajectories, processes data through Databricks Bronze/Silver/Gold layers, and evaluates a version-pinned MLflow/Unity Catalog LSTM risk classifier with its saved preprocessing metadata.
@@ -196,6 +300,8 @@ Evaluation reports include accuracy, fixed-four-class macro-F1,
 per-class metrics, and confusion matrices when labels are available.
 
 ### Documentation
+
+- [API and dashboard developer guide](docs/api_dashboard_guide.md) — endpoints, module responsibilities, architecture, and tests.
 
 - [Complete CLI guide](docs/cli_guide.md) — commands, configurations, execution modes, PowerShell examples, and architecture diagrams.
 - [Model training pipeline](docs/model_training_pipeline.md) — training and MLflow integration.
