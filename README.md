@@ -1,6 +1,59 @@
 # Financial Time-Series ML Platform
 
-An end-to-end project, built to practice production ML workflows, including data engineering, machine learning, MLOps, API deployment, orchestration, and business intelligence using simulated financial time-series data.
+[![CI](https://github.com/taymaz-gh/finance-timeseries-ml-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/taymaz-gh/finance-timeseries-ml-platform/actions/workflows/ci.yml)
+
+An end-to-end ML project on simulated financial account data. A Databricks
+Bronze/Silver/Gold pipeline prepares the data, an LSTM classifier assigns each
+account-day one of four risk states, and the model is served through FastAPI
+and explored in a Streamlit dashboard with interactive Plotly charts. Built to
+practise production ML workflows. All data is synthetic.
+
+## Architecture
+
+```text
+ Synthetic account data
+          |
+          v
+ Databricks medallion layers
+ Bronze -> Silver -> Gold
+          |
+          v
+ Training and evaluation  ------------>  MLflow tracking and
+ (Typer CLI, TensorFlow/Keras LSTM)      Unity Catalog registry (optional)
+          |
+          v
+ Local Keras model bundle
+          |
+          v
+ FastAPI service (CSV validation, inference)
+          |
+          v
+ Streamlit dashboard (Plotly charts, CSV download)
+```
+
+## Results on synthetic data
+
+The platform generates synthetic financial account trajectories, processes data through Databricks Bronze/Silver/Gold layers, and evaluates a version-pinned MLflow/Unity Catalog LSTM risk classifier with its saved preprocessing metadata.
+
+Three **post-development holdout** cohorts (distinct from the original train/validation/test split) test different account/date combinations:
+
+| Cohort | Accounts | Dates | Observations | Accuracy | Macro-F1 |
+|---|---|---|---:|---:|---:|
+| **Date Holdout** | Known | Future | 120,000 | 0.8988 | 0.8615 |
+| **Account Holdout** | New | Historical | 60,000 | 0.8991 | 0.8595 |
+| **Joint Holdout** | New | Future | 60,000 | 0.8967 | 0.8569 |
+
+These are **observed results on synthetic data** for `finance_ml.models.lstm_risk_classifier` version 1; they are not estimates of production banking performance.
+
+See [holdout pipeline documentation](docs/holdout_data_pipeline.md) for the two-dimensional account–date design, data flow diagrams, class-wise F1, confusion matrices, and limitations. See [model inference documentation](docs/model_inference_pipeline.md) for the pinned-model contract and batch-scoring interface. The end-to-end Databricks entry point is [`notebooks/10_build_future.ipynb`](notebooks/10_build_future.ipynb).
+
+
+---
+
+## Testing and CI
+
+A pytest suite runs on every push and pull request to `main` via GitHub
+Actions (Python 3.12, Java 17 for PySpark).
 
 ## Quick start: local CSV prediction dashboard
 
@@ -105,25 +158,6 @@ uv run --locked --extra api --extra dashboard --extra dev python -m pytest -q te
 For full verification, run `python -m pytest -q` in the synchronized environment. Common problems: `Connection refused` indicates FastAPI is not running; HTTP 503 means no loaded model; an HTTP 422 usually signals incorrect CSV columns, types, dates, or target leakage; too few observations produce `insufficient_context`. A dataset with fewer than the trained model's sequence length (usually 7) per account cannot produce predictions. Consult [API and dashboard developer guide](docs/api_dashboard_guide.md) for complete workflow diagrams and module ownership.
 
 ---
-
-## Implemented holdout evaluation
-
-The platform generates synthetic financial account trajectories, processes data through Databricks Bronze/Silver/Gold layers, and evaluates a version-pinned MLflow/Unity Catalog LSTM risk classifier with its saved preprocessing metadata.
-
-Three **post-development holdout** cohorts (distinct from the original train/validation/test split) test different account/date combinations:
-
-| Cohort | Accounts | Dates | Observations | Accuracy | Macro-F1 |
-|---|---|---|---:|---:|---:|
-| **Date Holdout** | Known | Future | 120,000 | 0.8988 | 0.8615 |
-| **Account Holdout** | New | Historical | 60,000 | 0.8991 | 0.8595 |
-| **Joint Holdout** | New | Future | 60,000 | 0.8967 | 0.8569 |
-
-These are **observed results on synthetic data** for `finance_ml.models.lstm_risk_classifier` version 1; they are not estimates of production banking performance.
-
-See [holdout pipeline documentation](docs/holdout_data_pipeline.md) for the two-dimensional account–date design, data flow diagrams, class-wise F1, confusion matrices, and limitations. See [model inference documentation](docs/model_inference_pipeline.md) for the pinned-model contract and batch-scoring interface. The end-to-end Databricks entry point is [`notebooks/10_build_future.ipynb`](notebooks/10_build_future.ipynb).
-
-
-
 
 ## Command-Line Interface (CLI)
 
